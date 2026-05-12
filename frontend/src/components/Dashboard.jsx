@@ -8,7 +8,7 @@ const metricIcons = {
   templates: LayoutTemplate
 };
 
-export default function Dashboard({ analytics, onRefresh, onSync, onOpenGenerator }) {
+export default function Dashboard({ analytics, onRefresh, onDriveRefresh, onOpenGenerator }) {
   const metrics = ['words', 'queued', 'published', 'failed', 'templates'];
 
   return (
@@ -17,7 +17,7 @@ export default function Dashboard({ analytics, onRefresh, onSync, onOpenGenerato
         <h2>Dashboard</h2>
         <div className="actions">
           <button className="ghost-btn" onClick={onRefresh}><RefreshCw size={17} /> Refresh</button>
-          <button className="primary-btn" onClick={onSync}><RefreshCw size={17} /> Sync Sheets</button>
+          <button className="primary-btn" onClick={onDriveRefresh}><RefreshCw size={17} /> Refresh Drive</button>
         </div>
       </div>
       <div className="metrics-grid">
@@ -36,7 +36,7 @@ export default function Dashboard({ analytics, onRefresh, onSync, onOpenGenerato
           <BookOpen size={22} />
           <strong>Open Card Generator</strong>
         </span>
-        <small>Preview the Multilevel Essays template and export PNG cards.</small>
+        <small>Prepare Drive-backed vocabulary batches with saved templates, audio, and captions.</small>
       </button>
       <div className="panel">
         <div className="panel-title">Recent Logs</div>

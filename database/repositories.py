@@ -6,17 +6,43 @@ from typing import Any
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
-from database.models import Accent, AdminUser, AudioFile, Post, PostingLog, PostStatus, Schedule, Template, Word, WordStatus
+from database.models import (
+    Accent,
+    AdminUser,
+    AudioFile,
+    DriveSourceFile,
+    GenerationBatch,
+    Post,
+    PostingLog,
+    PostStatus,
+    Schedule,
+    Template,
+    VocabularyCollection,
+    Word,
+    WordStatus,
+)
 
 
 class WordRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def upsert_from_sheet(self, row: dict[str, Any]) -> Word:
-        word = self.db.scalar(select(Word).where(Word.sheet_id == str(row["id"])))
+    def upsert_from_source(self, source_file: DriveSourceFile, row: dict[str, Any], source_index: int) -> Word:
+        source_row_key = str(row["source_row_key"])
+        word = self.db.scalar(
+            select(Word).where(
+                Word.source_file_id == source_file.id,
+                Word.source_row_key == source_row_key,
+            )
+        )
         if not word:
-            word = Word(sheet_id=str(row["id"]), word=row["word"], definition=row["definition"])
+            word = Word(
+                source_file=source_file,
+                source_row_key=source_row_key,
+                source_index=source_index,
+                word=row["word"],
+                definition=row["definition"],
+            )
             self.db.add(word)
 
         word.word = row["word"].strip()
@@ -26,17 +52,10 @@ class WordRepository:
         word.example = row.get("example")
         word.level = row.get("level")
         word.accent = row.get("accent")
-        word.status = WordStatus(row.get("status", "new").lower()) if row.get("status", "").lower() in WordStatus._value2member_map_ else WordStatus.NEW
+        word.status = WordStatus.NEW if word.status not in (WordStatus.QUEUED, WordStatus.POSTED) else word.status
+        word.source_index = source_index
         word.source_payload = row
         return word
-
-    def next_for_queue(self) -> Word | None:
-        return self.db.scalar(
-            select(Word)
-            .where(Word.status.in_([WordStatus.NEW, WordStatus.QUEUED, WordStatus.FAILED]))
-            .order_by(Word.created_at.asc())
-            .limit(1)
-        )
 
     def list_words(self, limit: int = 100, status: str | None = None) -> list[Word]:
         stmt = select(Word).order_by(desc(Word.created_at)).limit(limit)
@@ -71,8 +90,27 @@ class PostRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_for_word(self, word: Word, template: Template | None, scheduled_at: datetime | None = None) -> Post:
-        post = Post(word=word, template=template, scheduled_at=scheduled_at, status=PostStatus.QUEUED)
+    def create_for_word(
+        self,
+        word: Word,
+        template: Template | None,
+        *,
+        batch: GenerationBatch | None = None,
+        caption: str | None = None,
+        image_drive_file_id: str | None = None,
+        audio_drive_file_id: str | None = None,
+        scheduled_at: datetime | None = None,
+    ) -> Post:
+        post = Post(
+            word=word,
+            template=template,
+            batch=batch,
+            caption=caption,
+            image_drive_file_id=image_drive_file_id,
+            audio_drive_file_id=audio_drive_file_id,
+            scheduled_at=scheduled_at,
+            status=PostStatus.QUEUED,
+        )
         word.status = WordStatus.QUEUED
         self.db.add(post)
         return post
@@ -94,6 +132,38 @@ class PostRepository:
             .order_by(Post.scheduled_at.asc().nullsfirst(), Post.created_at.asc())
             .limit(1)
         )
+
+    def due(self, now: datetime, limit: int = 20) -> list[Post]:
+        return list(
+            self.db.scalars(
+                select(Post)
+                .join(Schedule, Post.schedule_id == Schedule.id)
+                .where(
+                    Post.status == PostStatus.QUEUED,
+                    Post.scheduled_at.is_not(None),
+                    Post.scheduled_at <= now,
+                    Schedule.is_active.is_(True),
+                    Schedule.is_paused.is_(False),
+                )
+                .order_by(Post.scheduled_at.asc())
+                .limit(limit)
+            )
+        )
+
+    def unscheduled_for_batch(self, batch_id: int, limit: int | None = None) -> list[Post]:
+        stmt = (
+            select(Post)
+            .join(Word, Post.word_id == Word.id)
+            .where(
+                Post.batch_id == batch_id,
+                Post.status == PostStatus.QUEUED,
+                Post.scheduled_at.is_(None),
+            )
+            .order_by(Word.source_index.asc().nulls_last(), Post.created_at.asc())
+        )
+        if limit:
+            stmt = stmt.limit(limit)
+        return list(self.db.scalars(stmt))
 
     def mark_published(self, post: Post, message_id: str | int | None) -> None:
         post.status = PostStatus.PUBLISHED
@@ -138,6 +208,98 @@ class ScheduleRepository:
 
     def list(self) -> list[Schedule]:
         return list(self.db.scalars(select(Schedule).order_by(desc(Schedule.created_at))))
+
+
+class VocabularyCollectionRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def list(self) -> list[VocabularyCollection]:
+        return list(self.db.scalars(select(VocabularyCollection).order_by(VocabularyCollection.name.asc())))
+
+    def get(self, collection_id: int) -> VocabularyCollection | None:
+        return self.db.get(VocabularyCollection, collection_id)
+
+    def upsert(
+        self,
+        *,
+        name: str,
+        slug: str,
+        drive_folder_id: str,
+        source_folder_id: str,
+        generated_folder_id: str,
+    ) -> VocabularyCollection:
+        collection = self.db.scalar(select(VocabularyCollection).where(VocabularyCollection.drive_folder_id == drive_folder_id))
+        if not collection:
+            collection = VocabularyCollection(
+                name=name,
+                slug=slug,
+                drive_folder_id=drive_folder_id,
+                source_folder_id=source_folder_id,
+                generated_folder_id=generated_folder_id,
+            )
+            self.db.add(collection)
+        else:
+            collection.name = name
+            collection.slug = slug
+            collection.source_folder_id = source_folder_id
+            collection.generated_folder_id = generated_folder_id
+        return collection
+
+
+class DriveSourceFileRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get(self, source_file_id: int) -> DriveSourceFile | None:
+        return self.db.get(DriveSourceFile, source_file_id)
+
+    def by_drive_id(self, drive_file_id: str) -> DriveSourceFile | None:
+        return self.db.scalar(select(DriveSourceFile).where(DriveSourceFile.drive_file_id == drive_file_id))
+
+    def list(self) -> list[DriveSourceFile]:
+        return list(self.db.scalars(select(DriveSourceFile).order_by(desc(DriveSourceFile.updated_at))))
+
+    def upsert(
+        self,
+        *,
+        collection: VocabularyCollection,
+        drive_file_id: str,
+        drive_parent_id: str | None,
+        name: str,
+        mime_type: str | None,
+        row_count: int | None = None,
+    ) -> DriveSourceFile:
+        source = self.by_drive_id(drive_file_id)
+        if not source:
+            source = DriveSourceFile(
+                collection=collection,
+                drive_file_id=drive_file_id,
+                drive_parent_id=drive_parent_id,
+                name=name,
+                mime_type=mime_type,
+                row_count=row_count or 0,
+            )
+            self.db.add(source)
+        else:
+            source.collection = collection
+            source.drive_parent_id = drive_parent_id
+            source.name = name
+            source.mime_type = mime_type
+            if row_count is not None:
+                source.row_count = row_count
+        return source
+
+
+class GenerationBatchRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get(self, batch_id: int) -> GenerationBatch | None:
+        return self.db.get(GenerationBatch, batch_id)
+
+    def list(self) -> list[GenerationBatch]:
+        return list(self.db.scalars(select(GenerationBatch).order_by(desc(GenerationBatch.created_at))))
 
 
 class AdminRepository:

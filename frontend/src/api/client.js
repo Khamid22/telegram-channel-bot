@@ -12,7 +12,12 @@ export async function request(path, options = {}) {
   });
 
   const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { error: text || 'Request failed' };
+  }
   if (!response.ok) {
     throw new Error(data.error || 'Request failed');
   }
@@ -30,17 +35,21 @@ export const api = {
   pauseScheduler: () => request('/api/scheduler/pause', { method: 'POST' }),
   resumeScheduler: () => request('/api/scheduler/resume', { method: 'POST' }),
   queue: () => request('/api/queue'),
-  enqueueNext: () => request('/api/queue/enqueue-next', { method: 'POST' }),
   publishManual: () => request('/api/publish/manual', { method: 'POST' }),
   publishPost: (id) => request(`/api/publish/${id}`, { method: 'POST' }),
   calendar: () => request('/api/calendar'),
   failedJobs: () => request('/api/failed-jobs'),
-  syncSheets: () => request('/api/sheets/sync', { method: 'POST' }),
+  driveVocabulary: () => request('/api/drive/vocabulary'),
+  refreshDrive: () => request('/api/drive/refresh', { method: 'POST' }),
   words: (params = {}) => request(`/api/words?${new URLSearchParams(params)}`),
   templates: () => request('/api/templates'),
   activateTemplate: (id) => request(`/api/templates/${id}/activate`, { method: 'POST' }),
   previewTemplate: (id, payload) => request(`/api/templates/${id}/preview`, { method: 'POST', body: JSON.stringify(payload) }),
   uploadTemplate: (payload) => request('/api/templates', { method: 'POST', body: payload }),
   uploadFont: (payload) => request('/api/fonts', { method: 'POST', body: payload }),
-  deleteSchedule: (id) => request(`/api/schedules/${id}`, { method: 'DELETE' })
+  deleteSchedule: (id) => request(`/api/schedules/${id}`, { method: 'DELETE' }),
+  vocabularyBatches: () => request('/api/generator/vocabulary/batches'),
+  uploadVocabularySource: (payload) => request('/api/generator/vocabulary/upload-source', { method: 'POST', body: payload }),
+  vocabularySourceRows: (id) => request(`/api/generator/vocabulary/sources/${id}/rows`),
+  generateVocabularyBatch: (payload) => request('/api/generator/vocabulary/batches', { method: 'POST', body: JSON.stringify(payload) })
 };

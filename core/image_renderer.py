@@ -43,7 +43,7 @@ class VocabularyImageRenderer:
         self.settings = get_settings()
         self.template_config_path = _resolve_path(template_config_path or self.settings.template_config_dir / "default.json")
 
-    def render(self, word: Word, template_config_path: str | Path | None = None) -> Path:
+    def render(self, word: Word, template_config_path: str | Path | None = None, *, output_dir: Path | None = None) -> Path:
         config_path = _resolve_path(template_config_path or self.template_config_path)
         config = json.loads(config_path.read_text(encoding="utf-8"))
         background_path = _resolve_path(config["background_image"])
@@ -66,9 +66,9 @@ class VocabularyImageRenderer:
             box = TextBox(**box_config)
             self._draw_text_box(draw, text, box)
 
-        output_dir = self.settings.generated_image_dir
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{word.id}-{_safe_slug(word.word)}.png"
+        target_dir = output_dir or self.settings.generated_image_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        output_path = target_dir / f"{word.id}-{_safe_slug(word.word)}.png"
         image.save(output_path, "PNG", optimize=True)
         return output_path
 

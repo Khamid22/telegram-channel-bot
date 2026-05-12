@@ -17,7 +17,9 @@ body {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -325,6 +327,25 @@ input {
   color: #111827;
 }
 
+select,
+textarea {
+  width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #111827;
+}
+
+select {
+  min-height: 40px;
+}
+
+textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
 .form-submit {
   white-space: nowrap;
 }
@@ -504,6 +525,81 @@ pre {
   grid-template-columns: minmax(320px, 0.9fr) minmax(380px, 1.1fr);
   gap: 18px;
   align-items: start;
+}
+
+.generator-workbench,
+.generator-review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.generator-source-panel,
+.generator-setup-panel,
+.preview-copy,
+.batch-result {
+  display: grid;
+  gap: 14px;
+}
+
+.generator-source-panel .panel-title,
+.generator-setup-panel .panel-title,
+.generator-review-grid .panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.generator-review-grid .generator-word-list {
+  max-height: 520px;
+}
+
+.generator-preview-card {
+  align-items: start;
+}
+
+.generator-preview-card .generator-preview-empty {
+  min-height: 360px;
+}
+
+.preview-copy strong {
+  font-size: 22px;
+}
+
+.preview-copy p,
+.preview-copy small {
+  margin: 0;
+  color: #4b5563;
+}
+
+.preview-copy pre {
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.batch-result {
+  align-items: start;
+}
+
+.batch-result strong {
+  font-size: 18px;
+}
+
+.batch-result span {
+  color: #4b5563;
+}
+
+.schedule-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.schedule-times {
+  grid-column: span 2;
 }
 
 .generator-column {
@@ -740,7 +836,10 @@ pre {
 
   .metrics-grid,
   .form-grid,
-  .generator-layout {
+  .generator-layout,
+  .generator-workbench,
+  .generator-review-grid,
+  .schedule-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -766,8 +865,15 @@ pre {
   .metrics-grid,
   .form-grid,
   .generator-layout,
+  .generator-workbench,
+  .generator-review-grid,
+  .schedule-form,
   .tab-list {
     grid-template-columns: 1fr;
+  }
+
+  .schedule-times {
+    grid-column: auto;
   }
 
   .table-panel {

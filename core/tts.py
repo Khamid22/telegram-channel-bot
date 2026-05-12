@@ -20,13 +20,13 @@ class OpenAITTSService:
         self.client = OpenAI(api_key=self.settings.openai_api_key)
 
     @retry(wait=wait_exponential(multiplier=1, min=2, max=20), stop=stop_after_attempt(3), reraise=True)
-    def generate(self, word: Word, accent: Accent) -> Path:
-        output_dir = self.settings.generated_audio_dir
-        output_dir.mkdir(parents=True, exist_ok=True)
+    def generate(self, word: Word, accent: Accent, *, output_dir: Path | None = None) -> Path:
+        target_dir = output_dir or self.settings.generated_audio_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
 
         voice = self.settings.openai_tts_voice_uk
         instructions = "Pronounce this word naturally in British English. Speak only the word."
-        output_path = output_dir / f"{word.id}-pronunciation-{word.word.lower().replace(' ', '-')}.mp3"
+        output_path = target_dir / f"{word.id}-pronunciation-{word.word.lower().replace(' ', '-')}.mp3"
 
         logger.info("Generating pronunciation for %s", word.word)
         try:

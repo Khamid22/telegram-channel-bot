@@ -16,7 +16,7 @@ const tabs = [
   { id: 'schedules', label: 'Scheduler', icon: Timer },
   { id: 'queue', label: 'Queue', icon: ListTodo },
   { id: 'calendar', label: 'Calendar', icon: CalendarDays },
-  { id: 'templates', label: 'Templates', icon: LayoutTemplate },
+  { id: 'templates', label: 'Template Library', icon: LayoutTemplate },
   { id: 'failed', label: 'Failed', icon: TriangleAlert }
 ];
 
@@ -33,6 +33,7 @@ export default function App() {
   const [queue, setQueue] = useState([]);
   const [calendar, setCalendar] = useState([]);
   const [templates, setTemplates] = useState([]);
+  const [batches, setBatches] = useState([]);
   const [failed, setFailed] = useState([]);
   const [notice, setNotice] = useState('');
 
@@ -40,13 +41,14 @@ export default function App() {
 
   async function loadAll() {
     // allSettled so one failing endpoint doesn't wipe all other state
-    const [analyticsRes, schedulesRes, queueRes, calendarRes, templatesRes, failedRes] = await Promise.allSettled([
+    const [analyticsRes, schedulesRes, queueRes, calendarRes, templatesRes, failedRes, batchesRes] = await Promise.allSettled([
       api.analytics(),
       api.schedules(),
       api.queue(),
       api.calendar(),
       api.templates(),
-      api.failedJobs()
+      api.failedJobs(),
+      api.vocabularyBatches()
     ]);
     if (analyticsRes.status === 'fulfilled') setAnalytics(analyticsRes.value);
     if (schedulesRes.status === 'fulfilled') setSchedules(schedulesRes.value.items ?? []);
@@ -54,6 +56,7 @@ export default function App() {
     if (calendarRes.status === 'fulfilled') setCalendar(calendarRes.value.items ?? []);
     if (templatesRes.status === 'fulfilled') setTemplates(templatesRes.value.items ?? []);
     if (failedRes.status === 'fulfilled') setFailed(failedRes.value.items ?? []);
+    if (batchesRes.status === 'fulfilled') setBatches(batchesRes.value.items ?? []);
   }
 
   async function boot() {
@@ -85,10 +88,14 @@ export default function App() {
     window.location.hash = tabId;
   }
 
-  async function syncSheets() {
-    const data = await api.syncSheets();
-    setNotice(`Synced ${data.synced} rows`);
-    await loadAll();
+  async function refreshDrive() {
+    try {
+      const data = await api.refreshDrive();
+      setNotice(`Drive refreshed: ${data.collections?.length ?? 0} folders, ${data.sources?.length ?? 0} CSV files`);
+      await loadAll();
+    } catch (error) {
+      setNotice(error.message);
+    }
   }
 
   async function logout() {
@@ -133,11 +140,11 @@ export default function App() {
             <BookOpen size={17} /> Generator
           </button>
         </header>
-        {active === 'dashboard' ? <Dashboard analytics={analytics} onRefresh={loadAll} onSync={syncSheets} onOpenGenerator={() => openTab('generator')} /> : null}
-        {active === 'schedules' ? <Schedules schedules={schedules} onChanged={loadAll} /> : null}
+        {active === 'dashboard' ? <Dashboard analytics={analytics} onRefresh={loadAll} onDriveRefresh={refreshDrive} onOpenGenerator={() => openTab('generator')} /> : null}
+        {active === 'schedules' ? <Schedules schedules={schedules} batches={batches} onChanged={loadAll} /> : null}
         {active === 'queue' ? <Queue items={queue} onChanged={loadAll} /> : null}
         {active === 'calendar' ? <Calendar items={calendar} /> : null}
-        {active === 'generator' ? <VocabPostGenerator /> : null}
+        {active === 'generator' ? <VocabPostGenerator templates={templates} onChanged={loadAll} /> : null}
         {active === 'templates' ? <Templates templates={templates} onChanged={loadAll} /> : null}
         {active === 'failed' ? <FailedJobs items={failed} onChanged={loadAll} /> : null}
       </section>

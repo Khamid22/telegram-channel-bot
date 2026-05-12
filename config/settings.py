@@ -25,10 +25,10 @@ class Settings(BaseSettings):
     openai_tts_model: str = "gpt-4o-mini-tts"
     openai_tts_voice_uk: str = "alloy"
 
-    google_sheet_id: str = ""
-    google_sheet_range: str = "Vocabulary!A:H"
     google_service_account_file: str = "credentials.json"
     google_service_account_json: str = ""
+    google_drive_root_folder_name: str = "writing-telegram-channel"
+    google_drive_root_folder_id: str = ""
 
     admin_host: str = "0.0.0.0"
     admin_port: int = 5050

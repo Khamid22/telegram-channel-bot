@@ -1,10 +1,11 @@
 # Multilevel Essays Telegram Publisher
 
-Production-ready scaffold for a Telegram publishing workflow with aiogram 3, Flask, React, PostgreSQL, APScheduler, Google Sheets sync, OpenAI TTS, SQLAlchemy, and Pillow image rendering.
+Production-ready scaffold for a Telegram publishing workflow with aiogram 3, Flask, React, PostgreSQL, APScheduler, Google Drive-backed content storage, OpenAI TTS, SQLAlchemy, and Pillow image rendering.
 
 ## Features
 
-- Sync vocabulary rows from Google Sheets. The importer supports the full schema (`id`, `word`, `word_type`, `phonetic`, `definition`, `example`, `level`, `accent`, `status`) and your simplified schema (`word`, `word_type`, `definition`, `example`, `Level`).
+- Upload vocabulary CSV files into Google Drive or reuse Drive-hosted CSVs already inside the project folder structure.
+- Review rows, choose a saved template, and pre-generate Drive-backed image/audio/caption assets before scheduling.
 - Auto-publish image posts to the configured Telegram channel
 - Generate one British English pronunciation audio file with OpenAI TTS
 - Template-based PNG rendering with Pillow onto static background images
@@ -104,17 +105,33 @@ docker compose up --build
 
 The app is available at `http://localhost:5050`.
 
-## Google Sheets
+## Google Drive
 
-Create a Google service account, share the Sheet with the service account email, and place the service account JSON file at the path configured by `GOOGLE_SERVICE_ACCOUNT_FILE`. The local `credentials.json` file is ignored by Git.
+Create a Google service account, enable Drive access for it, and place the service account JSON file at the path configured by `GOOGLE_SERVICE_ACCOUNT_FILE`. The local `credentials.json` file is ignored by Git.
 
-Your current Sheet format is supported:
+The app manages this Drive layout automatically:
 
 ```text
-word | word_type | definition | example | Level
+writing-telegram-channel/
+└── vocabulary/
+    ├── new-words/
+    │   ├── source-files/
+    │   └── generated-posts/
+    ├── idioms/
+    │   ├── source-files/
+    │   └── generated-posts/
+    └── templates/
 ```
 
-Because there is no `id` column, the app auto-generates a stable internal id from the word and definition. `phonetic`, `accent`, and `status` are optional; missing rows are imported with blank phonetics/accent and `new` status.
+If `GOOGLE_DRIVE_ROOT_FOLDER_ID` is provided, the app uses that existing folder. Otherwise it creates or reuses a folder named by `GOOGLE_DRIVE_ROOT_FOLDER_NAME`.
+
+Vocabulary CSV files must use a header row. Supported starter columns are:
+
+```text
+Name,Word-Type,Definition,Example
+```
+
+Extra future columns are preserved in the stored row payload.
 
 ## Template System
 

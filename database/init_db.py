@@ -13,9 +13,50 @@ def ensure_schema_compatibility() -> None:
         return
 
     word_columns = {column["name"] for column in inspector.get_columns("words")}
+    post_columns = {column["name"] for column in inspector.get_columns("posts")} if "posts" in inspector.get_table_names() else set()
+    schedule_columns = {column["name"] for column in inspector.get_columns("schedules")} if "schedules" in inspector.get_table_names() else set()
+    template_columns = {column["name"] for column in inspector.get_columns("templates")} if "templates" in inspector.get_table_names() else set()
     with engine.begin() as connection:
         if "word_type" not in word_columns:
             connection.execute(text("ALTER TABLE words ADD COLUMN word_type VARCHAR(80)"))
+        if "source_file_id" not in word_columns:
+            connection.execute(text("ALTER TABLE words ADD COLUMN source_file_id INTEGER"))
+        if "source_row_key" not in word_columns:
+            connection.execute(text("ALTER TABLE words ADD COLUMN source_row_key VARCHAR(160)"))
+        if "source_index" not in word_columns:
+            connection.execute(text("ALTER TABLE words ADD COLUMN source_index INTEGER"))
+        if "sheet_id" in word_columns:
+            connection.execute(text("ALTER TABLE words ALTER COLUMN sheet_id DROP NOT NULL"))
+        if "batch_id" not in post_columns:
+            connection.execute(text("ALTER TABLE posts ADD COLUMN batch_id INTEGER"))
+        if "schedule_id" not in post_columns:
+            connection.execute(text("ALTER TABLE posts ADD COLUMN schedule_id INTEGER"))
+        if "image_drive_file_id" not in post_columns:
+            connection.execute(text("ALTER TABLE posts ADD COLUMN image_drive_file_id VARCHAR(160)"))
+        if "audio_drive_file_id" not in post_columns:
+            connection.execute(text("ALTER TABLE posts ADD COLUMN audio_drive_file_id VARCHAR(160)"))
+        if "content_type" not in schedule_columns:
+            connection.execute(text("ALTER TABLE schedules ADD COLUMN content_type VARCHAR(48) DEFAULT 'vocabulary'"))
+        if "batch_id" not in schedule_columns:
+            connection.execute(text("ALTER TABLE schedules ADD COLUMN batch_id INTEGER"))
+        if "start_date" not in schedule_columns:
+            connection.execute(text("ALTER TABLE schedules ADD COLUMN start_date DATE"))
+        if "end_date" not in schedule_columns:
+            connection.execute(text("ALTER TABLE schedules ADD COLUMN end_date DATE"))
+        if "dispatch_mode" not in schedule_columns:
+            connection.execute(text("ALTER TABLE schedules ADD COLUMN dispatch_mode VARCHAR(32) DEFAULT 'even'"))
+        if "window_start" not in schedule_columns:
+            connection.execute(text("ALTER TABLE schedules ADD COLUMN window_start VARCHAR(16)"))
+        if "window_end" not in schedule_columns:
+            connection.execute(text("ALTER TABLE schedules ADD COLUMN window_end VARCHAR(16)"))
+        if "manual_times" not in schedule_columns:
+            connection.execute(text("ALTER TABLE schedules ADD COLUMN manual_times JSONB DEFAULT '[]'::jsonb"))
+        if "scheduled_post_count" not in schedule_columns:
+            connection.execute(text("ALTER TABLE schedules ADD COLUMN scheduled_post_count INTEGER DEFAULT 0"))
+        if "image_drive_file_id" not in template_columns:
+            connection.execute(text("ALTER TABLE templates ADD COLUMN image_drive_file_id VARCHAR(160)"))
+        if "config_drive_file_id" not in template_columns:
+            connection.execute(text("ALTER TABLE templates ADD COLUMN config_drive_file_id VARCHAR(160)"))
 
 
 def bootstrap_database() -> None:

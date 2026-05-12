@@ -1,48 +1,41 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from database.models import Accent, Post, PostStatus, Word
-from database.repositories import AudioRepository, LogRepository, PostRepository, TemplateRepository, WordRepository
-from core.image_renderer import VocabularyImageRenderer
+from database.models import Post, PostStatus, Word
+from database.repositories import LogRepository, PostRepository
+from core.google_drive import GoogleDriveStorage
 from core.telegram import TelegramPublisher
-from core.tts import OpenAITTSService
 
 logger = logging.getLogger(__name__)
 
 
-def build_caption(word: Word) -> str:
+def build_caption(word: Word, custom_caption: str | None = None) -> str:
     tags = ["#english", "#ielts"]
     if word.level:
         tags.append(f"#{word.level.upper().replace(' ', '')}")
     if word.word_type:
         tags.append(f"#{word.word_type.lower().replace(' ', '')}")
-    return " ".join(tags)
+    parts = [part for part in ((custom_caption or "").strip(), " ".join(tags)) if part]
+    return "\n\n".join(parts)
 
 
 class PublishingService:
     def __init__(self, db: Session):
         self.db = db
         self.posts = PostRepository(db)
-        self.words = WordRepository(db)
-        self.templates = TemplateRepository(db)
-        self.audio = AudioRepository(db)
         self.logs = LogRepository(db)
+        self.drive = GoogleDriveStorage()
 
     def ensure_post(self) -> Post:
         post = self.posts.next_queued()
         if post:
             return post
-
-        word = self.words.next_for_queue()
-        if not word:
-            raise RuntimeError("No words available to publish")
-        post = self.posts.create_for_word(word, self.templates.active())
-        self.db.commit()
-        return post
+        raise RuntimeError("No generated posts are queued")
 
     async def publish_next(self) -> Post:
         post = self.ensure_post()
@@ -53,24 +46,19 @@ class PublishingService:
         self.db.commit()
 
         try:
-            template = post.template or self.templates.active()
-            renderer = VocabularyImageRenderer(template.config_path if template else None)
-            image_path = renderer.render(post.word, template.config_path if template else None)
-            caption = build_caption(post.word)
-
-            tts = OpenAITTSService()
+            if not post.image_drive_file_id or not post.audio_drive_file_id:
+                raise RuntimeError("Generated Drive assets are missing for this post")
             telegram = TelegramPublisher()
-            try:
-                audio_path = tts.generate(post.word, Accent.UK)
-                self.audio.save(post.word.id, Accent.UK, str(audio_path), "multilevel essays")
+            with tempfile.TemporaryDirectory(prefix="writing-telegram-post-") as temp_dir:
+                temp_path = Path(temp_dir)
+                image_path = self.drive.download_to_path(post.image_drive_file_id, temp_path / f"post-{post.id}.png")
+                audio_path = self.drive.download_to_path(post.audio_drive_file_id, temp_path / f"post-{post.id}.mp3")
+                try:
+                    message = await telegram.send_vocabulary_post(image_path, post.caption or build_caption(post.word))
+                    await telegram.send_audio(audio_path, post.word.word, "multilevel essays")
+                finally:
+                    await telegram.close()
 
-                message = await telegram.send_vocabulary_post(image_path, caption)
-                await telegram.send_audio(Path(audio_path), post.word.word, "multilevel essays")
-            finally:
-                await telegram.close()
-
-            post.caption = caption
-            post.generated_image_path = str(image_path)
             self.posts.mark_published(post, message.message_id)
             self.logs.add("publish_success", f"Published {post.word.word}", post_id=post.id)
             self.db.commit()

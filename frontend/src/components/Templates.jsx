@@ -37,7 +37,7 @@ export default function Templates({ templates, onChanged }) {
   return (
     <section className="view-grid">
       <div className="toolbar">
-        <h2>Templates</h2>
+        <h2>Template Library</h2>
       </div>
       <form className="panel form-grid" onSubmit={upload}>
         <label>Name<input required value={name} onChange={(event) => setName(event.target.value)} /></label>

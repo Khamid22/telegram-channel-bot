@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date, datetime, time, timedelta
+from io import BytesIO
 import json
 import re
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, SchedulerNotRunningError
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 from flask_login import LoginManager, current_user, login_required, login_user, logout_user
 from sqlalchemy import desc, select
@@ -15,20 +18,25 @@ from werkzeug.security import check_password_hash
 from werkzeug.utils import secure_filename
 
 from config.settings import BASE_DIR, get_settings
-from database.models import AdminUser, Post, Schedule, Template, Word
+from database.models import AdminUser, DriveSourceFile, GenerationBatch, Post, Schedule, Template, VocabularyCollection, Word
 from database.repositories import (
     AdminRepository,
+    DriveSourceFileRepository,
+    GenerationBatchRepository,
     PostRepository,
     ScheduleRepository,
     TemplateRepository,
+    VocabularyCollectionRepository,
     WordRepository,
     analytics_summary,
 )
 from database.session import SessionLocal
-from core.google_sheets import sync_words_from_sheets
-from core.scheduler import build_scheduler, normalize_days, normalize_times
+from core.google_drive import GoogleDriveStorage
+from core.scheduler import build_scheduler, normalize_time, normalize_times
 from core.image_renderer import VocabularyImageRenderer
 from core.publishing import PublishingService, build_caption
+from core.template_storage import ensure_template_files
+from core.vocabulary_generator import VocabularyGeneratorService
 
 login_manager = LoginManager()
 runtime_scheduler = None
@@ -52,7 +60,8 @@ def _no_store(response):
 def _word_payload(word: Word) -> dict[str, Any]:
     return {
         "id": word.id,
-        "sheet_id": word.sheet_id,
+        "source_file_id": word.source_file_id,
+        "source_index": word.source_index,
         "word": word.word,
         "word_type": word.word_type,
         "phonetic": word.phonetic,
@@ -71,21 +80,14 @@ def _post_payload(post: Post) -> dict[str, Any]:
         "status": post.status.value,
         "caption": post.caption,
         "generated_image_path": post.generated_image_path,
-        "image_url": f"/assets/generated/{Path(post.generated_image_path).name}" if post.generated_image_path else None,
+        "image_url": f"/api/posts/{post.id}/image" if post.image_drive_file_id else None,
         "telegram_message_id": post.telegram_message_id,
         "scheduled_at": post.scheduled_at.isoformat() if post.scheduled_at else None,
         "published_at": post.published_at.isoformat() if post.published_at else None,
         "error_message": post.error_message,
         "word": _word_payload(post.word),
-        "audio": [
-            {
-                "id": audio.id,
-                "accent": audio.accent.value,
-                "url": f"/assets/audio/{Path(audio.file_path).name}",
-                "voice": audio.voice,
-            }
-            for audio in post.word.audio_files
-        ],
+        "audio": [{"id": f"post-{post.id}", "url": f"/api/posts/{post.id}/audio", "voice": "multilevel essays"}] if post.audio_drive_file_id else [],
+        "batch": _batch_payload(post.batch) if post.batch else None,
     }
 
 
@@ -93,11 +95,18 @@ def _schedule_payload(schedule: Schedule) -> dict[str, Any]:
     return {
         "id": schedule.id,
         "name": schedule.name,
+        "content_type": schedule.content_type,
+        "batch_id": schedule.batch_id,
+        "batch_name": schedule.batch.name if schedule.batch else None,
         "timezone": schedule.timezone,
-        "days": schedule.days or [],
-        "times": schedule.times or [],
+        "start_date": schedule.start_date.isoformat() if schedule.start_date else None,
+        "end_date": schedule.end_date.isoformat() if schedule.end_date else None,
+        "dispatch_mode": schedule.dispatch_mode,
+        "window_start": schedule.window_start,
+        "window_end": schedule.window_end,
+        "manual_times": schedule.manual_times or [],
         "posts_per_day": schedule.posts_per_day,
-        "random_interval_minutes": schedule.random_interval_minutes,
+        "scheduled_post_count": schedule.scheduled_post_count,
         "is_active": schedule.is_active,
         "is_paused": schedule.is_paused,
     }
@@ -110,27 +119,128 @@ def _template_payload(template: Template) -> dict[str, Any]:
         "image_path": template.image_path,
         "config_path": template.config_path,
         "image_url": f"/assets/templates/{Path(template.image_path).name}",
+        "drive_backed": bool(template.image_drive_file_id and template.config_drive_file_id),
         "is_active": template.is_active,
         "created_at": template.created_at.isoformat() if template.created_at else None,
     }
 
 
+def _collection_payload(collection: VocabularyCollection) -> dict[str, Any]:
+    return {
+        "id": collection.id,
+        "name": collection.name,
+        "slug": collection.slug,
+        "drive_folder_id": collection.drive_folder_id,
+        "source_folder_id": collection.source_folder_id,
+        "generated_folder_id": collection.generated_folder_id,
+    }
+
+
+def _source_payload(source: DriveSourceFile) -> dict[str, Any]:
+    return {
+        "id": source.id,
+        "collection_id": source.collection_id,
+        "collection_name": source.collection.name if source.collection else None,
+        "drive_file_id": source.drive_file_id,
+        "name": source.name,
+        "mime_type": source.mime_type,
+        "row_count": source.row_count,
+        "updated_at": source.updated_at.isoformat() if source.updated_at else None,
+    }
+
+
+def _batch_payload(batch: GenerationBatch) -> dict[str, Any]:
+    return {
+        "id": batch.id,
+        "name": batch.name,
+        "status": batch.status,
+        "collection_id": batch.collection_id,
+        "collection_name": batch.collection.name if batch.collection else None,
+        "source_file_id": batch.source_file_id,
+        "source_file_name": batch.source_file.name if batch.source_file else None,
+        "template_id": batch.template_id,
+        "template_name": batch.template.name if batch.template else None,
+        "caption_text": batch.caption_text,
+        "total_items": batch.total_items,
+        "generated_items": batch.generated_items,
+        "created_at": batch.created_at.isoformat() if batch.created_at else None,
+    }
+
+
 def _schedule_data(data: dict[str, Any], settings) -> dict[str, Any]:
-    days = normalize_days(data.get("days") or ["mon", "tue", "wed", "thu", "fri"])
-    times = normalize_times(data.get("times") or ["09:00"])
-    if not times:
-        raise ValueError("At least one valid publish time is required. Use HH:MM, for example 09:00.")
+    if not data.get("batch_id"):
+        raise ValueError("Select a generated vocabulary batch.")
+    start_date = date.fromisoformat(data["start_date"])
+    end_date = date.fromisoformat(data["end_date"])
+    if end_date < start_date:
+        raise ValueError("End date must be on or after the start date.")
+
+    dispatch_mode = data.get("dispatch_mode") or "even"
+    manual_times = normalize_times(data.get("manual_times") or [])
+    window_start = normalize_time(data.get("window_start") or "09:00")
+    window_end = normalize_time(data.get("window_end") or "18:00")
+    posts_per_day = int(data.get("posts_per_day") or 1)
+    if posts_per_day < 1:
+        raise ValueError("Posts per day must be at least 1.")
+    if dispatch_mode == "manual":
+        if not manual_times:
+            raise ValueError("Manual scheduling requires at least one time.")
+        posts_per_day = len(manual_times)
+    else:
+        if not window_start or not window_end:
+            raise ValueError("Even scheduling requires a valid start and end time.")
+        start_minutes = int(window_start[:2]) * 60 + int(window_start[3:])
+        end_minutes = int(window_end[:2]) * 60 + int(window_end[3:])
+        if end_minutes < start_minutes:
+            raise ValueError("The time window end must be after the start.")
 
     return {
         "name": data["name"] if "name" in data else None,
+        "content_type": "vocabulary",
+        "batch_id": int(data["batch_id"]),
         "timezone": data.get("timezone") or settings.timezone,
-        "days": days,
-        "times": times,
-        "posts_per_day": int(data.get("posts_per_day") or len(times)),
-        "random_interval_minutes": data.get("random_interval_minutes"),
+        "start_date": start_date,
+        "end_date": end_date,
+        "dispatch_mode": dispatch_mode,
+        "window_start": window_start,
+        "window_end": window_end,
+        "manual_times": manual_times,
+        "posts_per_day": posts_per_day,
         "is_active": bool(data.get("is_active", True)),
         "is_paused": bool(data.get("is_paused", False)),
     }
+
+
+def _times_for_schedule(schedule_data: dict[str, Any]) -> list[str]:
+    if schedule_data["dispatch_mode"] == "manual":
+        return schedule_data["manual_times"]
+
+    posts_per_day = schedule_data["posts_per_day"]
+    start = schedule_data["window_start"]
+    end = schedule_data["window_end"]
+    start_minutes = int(start[:2]) * 60 + int(start[3:])
+    end_minutes = int(end[:2]) * 60 + int(end[3:])
+    if posts_per_day == 1:
+        return [start]
+
+    step = (end_minutes - start_minutes) / (posts_per_day - 1)
+    publish_times = []
+    for index in range(posts_per_day):
+        minute_value = round(start_minutes + step * index)
+        publish_times.append(f"{minute_value // 60:02d}:{minute_value % 60:02d}")
+    return publish_times
+
+
+def _schedule_slots(schedule_data: dict[str, Any]) -> list[datetime]:
+    zone = ZoneInfo(schedule_data["timezone"])
+    slots: list[datetime] = []
+    current_day = schedule_data["start_date"]
+    while current_day <= schedule_data["end_date"]:
+        for publish_time in _times_for_schedule(schedule_data):
+            hour, minute = [int(part) for part in publish_time.split(":", 1)]
+            slots.append(datetime.combine(current_day, time(hour, minute), tzinfo=zone))
+        current_day += timedelta(days=1)
+    return slots
 
 
 def _scheduler_state() -> str:
@@ -224,13 +334,34 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
             return _json({"user": None}, 401)
         return _json({"user": {"id": current_user.id, "username": current_user.username}})
 
-    @app.post("/api/sheets/sync")
+    @app.get("/api/drive/vocabulary")
     @login_required
-    def sync_sheets():
+    def drive_vocabulary_catalog():
         db = SessionLocal()
         try:
-            count = sync_words_from_sheets(db)
-            return _json({"synced": count})
+            return _json(
+                {
+                    "collections": [_collection_payload(item) for item in VocabularyCollectionRepository(db).list()],
+                    "sources": [_source_payload(item) for item in DriveSourceFileRepository(db).list()],
+                }
+            )
+        finally:
+            db.close()
+
+    @app.post("/api/drive/refresh")
+    @login_required
+    def refresh_drive():
+        db = SessionLocal()
+        try:
+            payload = VocabularyGeneratorService(db).refresh_drive_catalog()
+            return _json(
+                {
+                    "collections": [_collection_payload(item) for item in payload["collections"]],
+                    "sources": [_source_payload(item) for item in payload["sources"]],
+                }
+            )
+        except RuntimeError as exc:
+            return _json({"error": str(exc)}, 400)
         finally:
             db.close()
 
@@ -251,18 +382,6 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
         db = SessionLocal()
         try:
             return _json({"items": [_post_payload(post) for post in PostRepository(db).queued(100)]})
-        finally:
-            db.close()
-
-    @app.post("/api/queue/enqueue-next")
-    @login_required
-    def enqueue_next():
-        db = SessionLocal()
-        try:
-            service = PublishingService(db)
-            post = service.ensure_post()
-            db.commit()
-            return _json({"item": _post_payload(post)}, 201)
         finally:
             db.close()
 
@@ -333,21 +452,38 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
         db = SessionLocal()
         try:
             schedule_data = _schedule_data(data, settings)
+            batch = GenerationBatchRepository(db).get(schedule_data["batch_id"])
+            if not batch or batch.status != "ready":
+                return _json({"error": "Select a ready generated batch."}, 400)
+            slots = _schedule_slots(schedule_data)
+            posts = PostRepository(db).unscheduled_for_batch(batch.id, limit=len(slots))
+            if not posts:
+                return _json({"error": "This batch has no unscheduled posts left."}, 400)
             schedule = Schedule(
                 name=schedule_data["name"],
+                content_type=schedule_data["content_type"],
+                batch=batch,
                 timezone=schedule_data["timezone"],
-                days=schedule_data["days"],
-                times=schedule_data["times"],
+                start_date=schedule_data["start_date"],
+                end_date=schedule_data["end_date"],
+                dispatch_mode=schedule_data["dispatch_mode"],
+                window_start=schedule_data["window_start"],
+                window_end=schedule_data["window_end"],
+                manual_times=schedule_data["manual_times"],
                 posts_per_day=schedule_data["posts_per_day"],
-                random_interval_minutes=schedule_data["random_interval_minutes"],
                 is_active=schedule_data["is_active"],
                 is_paused=schedule_data["is_paused"],
             )
             db.add(schedule)
+            db.flush()
+            for post, scheduled_at in zip(posts, slots):
+                post.schedule = schedule
+                post.scheduled_at = scheduled_at
+            schedule.scheduled_post_count = len(posts)
             db.commit()
             reload_scheduler()
             return _json({"item": _schedule_payload(schedule)}, 201)
-        except ValueError as exc:
+        except (RuntimeError, ValueError) as exc:
             db.rollback()
             return _json({"error": str(exc)}, 400)
         finally:
@@ -362,15 +498,7 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
             schedule = db.get(Schedule, schedule_id)
             if not schedule:
                 return _json({"error": "Schedule not found"}, 404)
-            if "days" in data:
-                data["days"] = normalize_days(data["days"])
-            if "times" in data:
-                data["times"] = normalize_times(data["times"])
-                if not data["times"]:
-                    return _json({"error": "At least one valid publish time is required. Use HH:MM, for example 09:00."}, 400)
-                if "posts_per_day" not in data:
-                    data["posts_per_day"] = len(data["times"])
-            for field in ("name", "timezone", "days", "times", "posts_per_day", "random_interval_minutes", "is_active", "is_paused"):
+            for field in ("name", "is_active", "is_paused"):
                 if field in data:
                     setattr(schedule, field, data[field])
             db.commit()
@@ -387,6 +515,10 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
             schedule = db.get(Schedule, schedule_id)
             if not schedule:
                 return _json({"error": "Schedule not found"}, 404)
+            for post in schedule.posts:
+                if post.published_at is None:
+                    post.schedule = None
+                    post.scheduled_at = None
             db.delete(schedule)
             db.commit()
             reload_scheduler()
@@ -419,6 +551,82 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
         finally:
             db.close()
 
+    @app.get("/api/generator/vocabulary/batches")
+    @login_required
+    def vocabulary_batches():
+        db = SessionLocal()
+        try:
+            return _json({"items": [_batch_payload(batch) for batch in GenerationBatchRepository(db).list()]})
+        finally:
+            db.close()
+
+    @app.post("/api/generator/vocabulary/upload-source")
+    @login_required
+    def upload_vocabulary_source():
+        source_file = request.files.get("file")
+        collection_id = request.form.get("collection_id")
+        if not source_file or not collection_id:
+            return _json({"error": "Choose a vocabulary folder and CSV file."}, 400)
+        if not source_file.filename.lower().endswith(".csv"):
+            return _json({"error": "Vocabulary uploads must be CSV files."}, 400)
+
+        db = SessionLocal()
+        try:
+            collection = VocabularyCollectionRepository(db).get(int(collection_id))
+            if not collection:
+                return _json({"error": "Vocabulary folder not found. Refresh Drive and try again."}, 404)
+            source, rows = VocabularyGeneratorService(db).upload_source(
+                collection,
+                secure_filename(source_file.filename),
+                source_file.read(),
+            )
+            return _json({"source": _source_payload(source), "rows": rows}, 201)
+        except (RuntimeError, ValueError) as exc:
+            return _json({"error": str(exc)}, 400)
+        finally:
+            db.close()
+
+    @app.get("/api/generator/vocabulary/sources/<int:source_id>/rows")
+    @login_required
+    def vocabulary_source_rows(source_id: int):
+        db = SessionLocal()
+        try:
+            source = DriveSourceFileRepository(db).get(source_id)
+            if not source:
+                return _json({"error": "Drive source file not found."}, 404)
+            rows = VocabularyGeneratorService(db).rows_for_source(source)
+            return _json({"source": _source_payload(source), "rows": rows})
+        except (RuntimeError, ValueError) as exc:
+            return _json({"error": str(exc)}, 400)
+        finally:
+            db.close()
+
+    @app.post("/api/generator/vocabulary/batches")
+    @login_required
+    def create_vocabulary_batch():
+        data = request.get_json(force=True)
+        db = SessionLocal()
+        try:
+            source = DriveSourceFileRepository(db).get(int(data.get("source_file_id") or 0))
+            template = db.get(Template, int(data.get("template_id") or 0))
+            if not source:
+                return _json({"error": "Select a Drive CSV source file."}, 400)
+            if not template:
+                return _json({"error": "Select a saved template."}, 400)
+            batch = VocabularyGeneratorService(db).generate_batch(
+                source=source,
+                template=template,
+                name=data.get("name") or source.name,
+                caption_text=data.get("caption_text") or "",
+                settings_payload=data.get("settings_payload") or {},
+            )
+            return _json({"item": _batch_payload(batch)}, 201)
+        except ValueError as exc:
+            db.rollback()
+            return _json({"error": str(exc)}, 400)
+        finally:
+            db.close()
+
     @app.post("/api/templates")
     @login_required
     def upload_template():
@@ -447,15 +655,34 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
 
         db = SessionLocal()
         try:
+            drive = GoogleDriveStorage()
+            drive_structure = drive.ensure_root_structure()
+            image_drive = drive.upload_file(
+                image_path,
+                name=image_path.name,
+                parent_id=str(drive_structure["templates_id"]),
+                mime_type=image.mimetype or "image/png",
+            )
+            config_drive = drive.upload_file(
+                config_path,
+                name=config_path.name,
+                parent_id=str(drive_structure["templates_id"]),
+                mime_type="application/json",
+            )
             template = Template(
                 name=name,
                 image_path=str(image_path.relative_to(BASE_DIR)),
                 config_path=str(config_path.relative_to(BASE_DIR)),
+                image_drive_file_id=image_drive.id,
+                config_drive_file_id=config_drive.id,
                 is_active=False,
             )
             db.add(template)
             db.commit()
             return _json({"item": _template_payload(template)}, 201)
+        except RuntimeError as exc:
+            db.rollback()
+            return _json({"error": str(exc)}, 400)
         finally:
             db.close()
 
@@ -479,6 +706,7 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
             template = db.get(Template, template_id)
             if not template:
                 return _json({"error": "Template not found"}, 404)
+            ensure_template_files(template)
             preview_payload = {
                 "word": data.get("word", "serendipity"),
                 "word_type": data.get("word_type", "noun"),
@@ -489,7 +717,7 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
             }
             path = VocabularyImageRenderer(template.config_path).preview(preview_payload, template.config_path)
             preview_word = type("PreviewWord", (), preview_payload)()
-            return _json({"image_url": f"/assets/generated/{path.name}", "caption": build_caption(preview_word)})
+            return _json({"image_url": f"/assets/generated/{path.name}", "caption": build_caption(preview_word, data.get("caption_text"))})
         finally:
             db.close()
 
@@ -505,6 +733,32 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
         font.save(path)
         return _json({"path": str(path.relative_to(BASE_DIR))}, 201)
 
+    @app.get("/api/posts/<int:post_id>/image")
+    @login_required
+    def post_image(post_id: int):
+        db = SessionLocal()
+        try:
+            post = db.get(Post, post_id)
+            if not post or not post.image_drive_file_id:
+                return _json({"error": "Generated image not found."}, 404)
+            data = GoogleDriveStorage().download_bytes(post.image_drive_file_id)
+            return send_file(BytesIO(data), mimetype="image/png", download_name=f"post-{post.id}.png")
+        finally:
+            db.close()
+
+    @app.get("/api/posts/<int:post_id>/audio")
+    @login_required
+    def post_audio(post_id: int):
+        db = SessionLocal()
+        try:
+            post = db.get(Post, post_id)
+            if not post or not post.audio_drive_file_id:
+                return _json({"error": "Generated audio not found."}, 404)
+            data = GoogleDriveStorage().download_bytes(post.audio_drive_file_id)
+            return send_file(BytesIO(data), mimetype="audio/mpeg", download_name=f"post-{post.id}.mp3")
+        finally:
+            db.close()
+
     @app.get("/assets/generated/<path:filename>")
     def generated_asset(filename: str):
         return send_from_directory(settings.generated_image_dir, filename)
@@ -517,6 +771,19 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
     @app.get("/assets/templates/<path:filename>")
     @login_required
     def template_asset(filename: str):
+        target = settings.template_config_dir / filename
+        if not target.exists():
+            db = SessionLocal()
+            try:
+                template = db.scalar(
+                    select(Template).where(
+                        (Template.image_path.like(f"%/{filename}")) | (Template.config_path.like(f"%/{filename}"))
+                    )
+                )
+                if template:
+                    ensure_template_files(template)
+            finally:
+                db.close()
         return send_from_directory(settings.template_config_dir, filename)
 
     @app.get("/")

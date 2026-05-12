@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
-from database.repositories import LogRepository, ScheduleRepository
+from database.repositories import LogRepository, PostRepository
 from database.session import SessionLocal
 from core.publishing import PublishingService
 
@@ -77,15 +78,22 @@ def normalize_times(value: Any) -> list[str]:
     return normalized
 
 
-def publish_job(schedule_id: int | None = None) -> None:
+def publish_due_posts() -> None:
     db = SessionLocal()
     try:
-        LogRepository(db).add("scheduler_tick", f"Publish job started from schedule {schedule_id}")
-        db.commit()
-        asyncio.run(PublishingService(db).publish_next())
+        due_posts = PostRepository(db).due(datetime.now(timezone.utc))
+        if not due_posts:
+            return
+        logs = LogRepository(db)
+        publisher = PublishingService(db)
+        for post in due_posts:
+            logs.add("scheduler_tick", f"Publishing scheduled post {post.id}", payload={"post_id": post.id})
+            db.commit()
+            asyncio.run(publisher.publish(post))
     except Exception as exc:
         logger.exception("Scheduled publish failed")
-        LogRepository(db).add("scheduler_failed", str(exc), level="error", payload={"schedule_id": schedule_id})
+        db.rollback()
+        LogRepository(db).add("scheduler_failed", str(exc), level="error")
         db.commit()
         raise
     finally:
@@ -93,38 +101,16 @@ def publish_job(schedule_id: int | None = None) -> None:
 
 
 def build_scheduler() -> BackgroundScheduler:
-    db = SessionLocal()
-    try:
-        schedules = ScheduleRepository(db).active()
-        scheduler = BackgroundScheduler()
-
-        for schedule in schedules:
-            if schedule.is_paused:
-                continue
-
-            days = ",".join(normalize_days(schedule.days)) or "*"
-            times = normalize_times(schedule.times)
-            for index, publish_time in enumerate(times):
-                hour, minute = [int(part) for part in publish_time.split(":", 1)]
-                trigger = CronTrigger(
-                    day_of_week=days,
-                    hour=hour,
-                    minute=minute,
-                    timezone=schedule.timezone,
-                    jitter=schedule.random_interval_minutes * 60 if schedule.random_interval_minutes else None,
-                )
-                scheduler.add_job(
-                    publish_job,
-                    trigger=trigger,
-                    id=f"schedule-{schedule.id}-{index}",
-                    kwargs={"schedule_id": schedule.id},
-                    replace_existing=True,
-                    max_instances=1,
-                    coalesce=True,
-                )
-        return scheduler
-    finally:
-        db.close()
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        publish_due_posts,
+        trigger=IntervalTrigger(minutes=1),
+        id="publish-due-posts",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    return scheduler
 
 
 def start_scheduler() -> BackgroundScheduler:

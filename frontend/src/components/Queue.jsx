@@ -1,4 +1,4 @@
-import { Play, Plus, Volume2 } from 'lucide-react';
+import { Play, Volume2 } from 'lucide-react';
 import { api } from '../api/client.js';
 
 export default function Queue({ items, onChanged }) {
@@ -12,7 +12,6 @@ export default function Queue({ items, onChanged }) {
       <div className="toolbar">
         <h2>Queue</h2>
         <div className="actions">
-          <button className="ghost-btn" onClick={async () => { await api.enqueueNext(); onChanged(); }}><Plus size={17} /> Enqueue</button>
           <button className="primary-btn" onClick={async () => { await api.publishManual(); onChanged(); }}><Play size={17} /> Manual publish</button>
         </div>
       </div>
