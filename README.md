@@ -114,6 +114,8 @@ Service accounts cannot own Drive storage in My Drive. Use a Shared Drive, add t
 - Set `GOOGLE_DRIVE_ROOT_FOLDER_ID` to an existing `writing-telegram-channel` project folder inside that Shared Drive.
 - Or set `GOOGLE_DRIVE_PARENT_FOLDER_ID` to a folder inside that Shared Drive so the app can create or reuse `GOOGLE_DRIVE_ROOT_FOLDER_NAME` beneath it.
 
+A normal My Drive folder that was merely shared with the service account is not enough; the folder itself must live inside a Shared Drive.
+
 The app manages this Drive layout automatically:
 
 ```text

@@ -56,10 +56,16 @@ class GoogleDriveStorage:
                     "Configure GOOGLE_DRIVE_ROOT_FOLDER_ID for an existing Shared Drive project folder, "
                     "or GOOGLE_DRIVE_PARENT_FOLDER_ID for a Shared Drive folder where the app may create it."
                 )
+            self.ensure_shared_drive_folder(
+                self.settings.google_drive_parent_folder_id,
+                label="GOOGLE_DRIVE_PARENT_FOLDER_ID",
+            )
             root_id = self.ensure_folder(
                 self.settings.google_drive_root_folder_name,
                 self.settings.google_drive_parent_folder_id,
             )
+        else:
+            self.ensure_shared_drive_folder(root_id, label="GOOGLE_DRIVE_ROOT_FOLDER_ID")
         vocabulary_id = self.ensure_folder("vocabulary", root_id)
         templates_id = self.ensure_folder("templates", vocabulary_id)
 
@@ -80,6 +86,24 @@ class GoogleDriveStorage:
             "templates_id": templates_id,
             "collections": collections,
         }
+
+    def ensure_shared_drive_folder(self, folder_id: str, *, label: str) -> None:
+        payload = (
+            self.service.files()
+            .get(
+                fileId=folder_id,
+                fields="id,mimeType,driveId",
+                supportsAllDrives=True,
+            )
+            .execute()
+        )
+        if payload.get("mimeType") != FOLDER_MIME:
+            raise RuntimeError(f"{label} must point to a Google Drive folder.")
+        if not payload.get("driveId"):
+            raise RuntimeError(
+                f"{label} points to a regular My Drive folder. "
+                "Use a folder that lives inside a Shared Drive."
+            )
 
     def ensure_collection_folders(self, name: str, folder_id: str) -> dict[str, str]:
         return {
