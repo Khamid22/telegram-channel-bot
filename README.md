@@ -22,7 +22,7 @@ project/
 ├── bot/                     # aiogram command runner
 ├── admin/                   # Flask admin API and built React assets
 ├── scheduler/               # APScheduler setup and jobs
-├── integrations/            # Google Sheets integration
+├── integrations/            # External service integrations
 ├── services/
 │   ├── image_renderer/      # Pillow template renderer
 │   ├── tts/                 # OpenAI TTS service
@@ -46,7 +46,7 @@ project/
 cp .env.example .env
 ```
 
-2. Fill `.env` with Telegram, OpenAI, Google Sheets, and PostgreSQL values.
+2. Fill `.env` with Telegram, OpenAI, Google Drive, and PostgreSQL values.
 
 3. Install Python libraries into your existing virtual environment:
 
@@ -107,7 +107,12 @@ The app is available at `http://localhost:5050`.
 
 ## Google Drive
 
-Create a Google service account, enable the **Google Drive API** in that Google Cloud project, grant Drive access for the service account, and place the service account JSON file at the path configured by `GOOGLE_SERVICE_ACCOUNT_FILE`. The local `credentials.json` file is ignored by Git.
+Create a Google service account, enable the **Google Drive API** in that Google Cloud project, and place the service account JSON file at the path configured by `GOOGLE_SERVICE_ACCOUNT_FILE`. The local `credentials.json` file is ignored by Git.
+
+Service accounts cannot own Drive storage in My Drive. Use a Shared Drive, add the service account as a member with permission to create files, and configure one of these modes:
+
+- Set `GOOGLE_DRIVE_ROOT_FOLDER_ID` to an existing `writing-telegram-channel` project folder inside that Shared Drive.
+- Or set `GOOGLE_DRIVE_PARENT_FOLDER_ID` to a folder inside that Shared Drive so the app can create or reuse `GOOGLE_DRIVE_ROOT_FOLDER_NAME` beneath it.
 
 The app manages this Drive layout automatically:
 
@@ -123,7 +128,7 @@ writing-telegram-channel/
     └── templates/
 ```
 
-If `GOOGLE_DRIVE_ROOT_FOLDER_ID` is provided, the app uses that existing folder. Otherwise it creates or reuses a folder named by `GOOGLE_DRIVE_ROOT_FOLDER_NAME`.
+The app creates and reuses the vocabulary, template, source, and generated-post folders below the configured Shared Drive project root.
 
 Vocabulary CSV files must use a header row. Supported starter columns are:
 

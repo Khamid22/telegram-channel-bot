@@ -49,7 +49,17 @@ class GoogleDriveStorage:
         self.service = build("drive", "v3", credentials=credentials, cache_discovery=False)
 
     def ensure_root_structure(self) -> dict[str, object]:
-        root_id = self.settings.google_drive_root_folder_id or self.ensure_folder(self.settings.google_drive_root_folder_name)
+        root_id = self.settings.google_drive_root_folder_id
+        if not root_id:
+            if not self.settings.google_drive_parent_folder_id:
+                raise RuntimeError(
+                    "Configure GOOGLE_DRIVE_ROOT_FOLDER_ID for an existing Shared Drive project folder, "
+                    "or GOOGLE_DRIVE_PARENT_FOLDER_ID for a Shared Drive folder where the app may create it."
+                )
+            root_id = self.ensure_folder(
+                self.settings.google_drive_root_folder_name,
+                self.settings.google_drive_parent_folder_id,
+            )
         vocabulary_id = self.ensure_folder("vocabulary", root_id)
         templates_id = self.ensure_folder("templates", vocabulary_id)
 
@@ -95,6 +105,8 @@ class GoogleDriveStorage:
                 spaces="drive",
                 fields="files(id,name,mimeType,parents)",
                 pageSize=1,
+                includeItemsFromAllDrives=True,
+                supportsAllDrives=True,
             )
             .execute()
         )
@@ -105,7 +117,7 @@ class GoogleDriveStorage:
         metadata = {"name": name, "mimeType": FOLDER_MIME}
         if parent_id:
             metadata["parents"] = [parent_id]
-        created = self.service.files().create(body=metadata, fields="id").execute()
+        created = self.service.files().create(body=metadata, fields="id", supportsAllDrives=True).execute()
         return created["id"]
 
     def list_folders(self, parent_id: str) -> list[DriveItem]:
@@ -127,6 +139,7 @@ class GoogleDriveStorage:
                 body={"name": name, "parents": [parent_id]},
                 media_body=media,
                 fields="id,name,mimeType,parents",
+                supportsAllDrives=True,
             )
             .execute()
         )
@@ -140,17 +153,22 @@ class GoogleDriveStorage:
                 body={"name": name, "parents": [parent_id]},
                 media_body=media,
                 fields="id,name,mimeType,parents",
+                supportsAllDrives=True,
             )
             .execute()
         )
         return self._item(created)
 
     def metadata(self, file_id: str) -> DriveItem:
-        payload = self.service.files().get(fileId=file_id, fields="id,name,mimeType,parents").execute()
+        payload = (
+            self.service.files()
+            .get(fileId=file_id, fields="id,name,mimeType,parents", supportsAllDrives=True)
+            .execute()
+        )
         return self._item(payload)
 
     def download_bytes(self, file_id: str) -> bytes:
-        request = self.service.files().get_media(fileId=file_id)
+        request = self.service.files().get_media(fileId=file_id, supportsAllDrives=True)
         buffer = io.BytesIO()
         downloader = MediaIoBaseDownload(buffer, request)
         done = False
@@ -174,6 +192,8 @@ class GoogleDriveStorage:
                     fields="nextPageToken,files(id,name,mimeType,parents)",
                     pageToken=page_token,
                     pageSize=200,
+                    includeItemsFromAllDrives=True,
+                    supportsAllDrives=True,
                 )
                 .execute()
             )

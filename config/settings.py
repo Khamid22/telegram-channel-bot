@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     google_service_account_json: str = ""
     google_drive_root_folder_name: str = "writing-telegram-channel"
     google_drive_root_folder_id: str = ""
+    google_drive_parent_folder_id: str = ""
 
     admin_host: str = "0.0.0.0"
     admin_port: int = 5050

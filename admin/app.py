@@ -64,6 +64,12 @@ def _drive_error_message(exc: Exception) -> str:
             payload = json.loads(exc.content.decode("utf-8"))
             detail = payload.get("error", {}).get("message")
             if detail:
+                if "Service Accounts do not have storage quota" in detail:
+                    return (
+                        "Google Drive service accounts must write into a Shared Drive. "
+                        "Add the service account to that Shared Drive and configure "
+                        "GOOGLE_DRIVE_ROOT_FOLDER_ID or GOOGLE_DRIVE_PARENT_FOLDER_ID."
+                    )
                 return detail
         except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
             pass
