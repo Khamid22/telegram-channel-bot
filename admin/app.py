@@ -13,6 +13,7 @@ from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, SchedulerNo
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 from flask_login import LoginManager, current_user, login_required, login_user, logout_user
+from googleapiclient.errors import HttpError
 from sqlalchemy import desc, select
 from werkzeug.security import check_password_hash
 from werkzeug.utils import secure_filename
@@ -55,6 +56,18 @@ def _no_store(response):
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
+
+
+def _drive_error_message(exc: Exception) -> str:
+    if isinstance(exc, HttpError):
+        try:
+            payload = json.loads(exc.content.decode("utf-8"))
+            detail = payload.get("error", {}).get("message")
+            if detail:
+                return detail
+        except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+            pass
+    return str(exc)
 
 
 def _word_payload(word: Word) -> dict[str, Any]:
@@ -360,8 +373,8 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
                     "sources": [_source_payload(item) for item in payload["sources"]],
                 }
             )
-        except RuntimeError as exc:
-            return _json({"error": str(exc)}, 400)
+        except (HttpError, RuntimeError) as exc:
+            return _json({"error": _drive_error_message(exc)}, 400)
         finally:
             db.close()
 
@@ -581,8 +594,8 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
                 source_file.read(),
             )
             return _json({"source": _source_payload(source), "rows": rows}, 201)
-        except (RuntimeError, ValueError) as exc:
-            return _json({"error": str(exc)}, 400)
+        except (HttpError, RuntimeError, ValueError) as exc:
+            return _json({"error": _drive_error_message(exc)}, 400)
         finally:
             db.close()
 
@@ -596,8 +609,8 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
                 return _json({"error": "Drive source file not found."}, 404)
             rows = VocabularyGeneratorService(db).rows_for_source(source)
             return _json({"source": _source_payload(source), "rows": rows})
-        except (RuntimeError, ValueError) as exc:
-            return _json({"error": str(exc)}, 400)
+        except (HttpError, RuntimeError, ValueError) as exc:
+            return _json({"error": _drive_error_message(exc)}, 400)
         finally:
             db.close()
 
@@ -621,9 +634,9 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
                 settings_payload=data.get("settings_payload") or {},
             )
             return _json({"item": _batch_payload(batch)}, 201)
-        except ValueError as exc:
+        except (HttpError, RuntimeError, ValueError) as exc:
             db.rollback()
-            return _json({"error": str(exc)}, 400)
+            return _json({"error": _drive_error_message(exc)}, 400)
         finally:
             db.close()
 
@@ -680,9 +693,9 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
             db.add(template)
             db.commit()
             return _json({"item": _template_payload(template)}, 201)
-        except RuntimeError as exc:
+        except (HttpError, RuntimeError) as exc:
             db.rollback()
-            return _json({"error": str(exc)}, 400)
+            return _json({"error": _drive_error_message(exc)}, 400)
         finally:
             db.close()
 
@@ -718,6 +731,8 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
             path = VocabularyImageRenderer(template.config_path).preview(preview_payload, template.config_path)
             preview_word = type("PreviewWord", (), preview_payload)()
             return _json({"image_url": f"/assets/generated/{path.name}", "caption": build_caption(preview_word, data.get("caption_text"))})
+        except (HttpError, RuntimeError) as exc:
+            return _json({"error": _drive_error_message(exc)}, 400)
         finally:
             db.close()
 
@@ -743,6 +758,8 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
                 return _json({"error": "Generated image not found."}, 404)
             data = GoogleDriveStorage().download_bytes(post.image_drive_file_id)
             return send_file(BytesIO(data), mimetype="image/png", download_name=f"post-{post.id}.png")
+        except (HttpError, RuntimeError) as exc:
+            return _json({"error": _drive_error_message(exc)}, 400)
         finally:
             db.close()
 
@@ -756,6 +773,8 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
                 return _json({"error": "Generated audio not found."}, 404)
             data = GoogleDriveStorage().download_bytes(post.audio_drive_file_id)
             return send_file(BytesIO(data), mimetype="audio/mpeg", download_name=f"post-{post.id}.mp3")
+        except (HttpError, RuntimeError) as exc:
+            return _json({"error": _drive_error_message(exc)}, 400)
         finally:
             db.close()
 

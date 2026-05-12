@@ -107,7 +107,7 @@ The app is available at `http://localhost:5050`.
 
 ## Google Drive
 
-Create a Google service account, enable Drive access for it, and place the service account JSON file at the path configured by `GOOGLE_SERVICE_ACCOUNT_FILE`. The local `credentials.json` file is ignored by Git.
+Create a Google service account, enable the **Google Drive API** in that Google Cloud project, grant Drive access for the service account, and place the service account JSON file at the path configured by `GOOGLE_SERVICE_ACCOUNT_FILE`. The local `credentials.json` file is ignored by Git.
 
 The app manages this Drive layout automatically:
 
