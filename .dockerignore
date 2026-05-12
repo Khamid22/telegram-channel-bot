@@ -1,0 +1,14 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+credentials.json
+curious-skyline-*.json
+logs
+assets/generated
+assets/audio
+admin/static
+frontend/node_modules
+frontend/dist
+.pytest_cache

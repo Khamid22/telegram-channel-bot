@@ -1,0 +1,148 @@
+# Multilevel Essays Telegram Publisher
+
+Production-ready scaffold for a Telegram publishing workflow with aiogram 3, Flask, React, PostgreSQL, APScheduler, Google Sheets sync, OpenAI TTS, SQLAlchemy, and Pillow image rendering.
+
+## Features
+
+- Sync vocabulary rows from Google Sheets. The importer supports the full schema (`id`, `word`, `word_type`, `phonetic`, `definition`, `example`, `level`, `accent`, `status`) and your simplified schema (`word`, `word_type`, `definition`, `example`, `Level`).
+- Auto-publish image posts to the configured Telegram channel
+- Generate one British English pronunciation audio file with OpenAI TTS
+- Template-based PNG rendering with Pillow onto static background images
+- JSON-configurable template coordinates, fonts, colors, line spacing, text widths, and dynamic font resizing
+- Flask authenticated admin API with React admin panel
+- Scheduler management: days, multiple times per day, timezone, pause/resume, manual publish, random jitter
+- Queue, calendar, preview, audio/template upload, analytics, and failed jobs endpoints
+- Docker + docker-compose with PostgreSQL
+
+## Project Structure
+
+```text
+project/
+├── bot/                     # aiogram command runner
+├── admin/                   # Flask admin API and built React assets
+├── scheduler/               # APScheduler setup and jobs
+├── integrations/            # Google Sheets integration
+├── services/
+│   ├── image_renderer/      # Pillow template renderer
+│   ├── tts/                 # OpenAI TTS service
+│   └── telegram/            # async Telegram publishing service
+├── assets/
+│   ├── templates/           # static template PNGs + JSON configs
+│   ├── fonts/               # uploaded custom fonts
+│   ├── generated/           # generated Telegram-ready PNGs
+│   └── audio/               # generated TTS audio
+├── database/                # SQLAlchemy models/repositories
+├── config/                  # settings and logging
+├── frontend/                # React admin UI
+└── main.py
+```
+
+## Local Setup
+
+1. Copy environment config:
+
+```bash
+cp .env.example .env
+```
+
+2. Fill `.env` with Telegram, OpenAI, Google Sheets, and PostgreSQL values.
+
+3. Install Python libraries into your existing virtual environment:
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+4. Generate the sample static template image:
+
+```bash
+python scripts/create_sample_assets.py
+```
+
+5. Start PostgreSQL locally or with Docker, then initialize tables and the default admin:
+
+```bash
+python main.py init-db
+```
+
+6. Start the Flask admin API. By default this also starts the embedded scheduler, controlled by `START_SCHEDULER_WITH_ADMIN=true`:
+
+```bash
+python main.py admin
+```
+
+7. For production-style deployments, set `START_SCHEDULER_WITH_ADMIN=false` and start the scheduler in another terminal:
+
+```bash
+python main.py scheduler
+```
+
+8. Optional aiogram polling process:
+
+```bash
+python main.py bot
+```
+
+The default admin login is controlled by `DEFAULT_ADMIN_USERNAME` and `DEFAULT_ADMIN_PASSWORD`.
+
+## React Admin UI
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+For production, Docker builds the React app and serves it through Flask from `admin/static`.
+
+## Docker
+
+```bash
+docker compose up --build
+```
+
+The app is available at `http://localhost:5050`.
+
+## Google Sheets
+
+Create a Google service account, share the Sheet with the service account email, and place the service account JSON file at the path configured by `GOOGLE_SERVICE_ACCOUNT_FILE`. The local `credentials.json` file is ignored by Git.
+
+Your current Sheet format is supported:
+
+```text
+word | word_type | definition | example | Level
+```
+
+Because there is no `id` column, the app auto-generates a stable internal id from the word and definition. `phonetic`, `accent`, and `status` are optional; missing rows are imported with blank phonetics/accent and `new` status.
+
+## Template System
+
+Each template has:
+
+- A static PNG background in `assets/templates/`
+- A JSON config in `assets/templates/`
+- Field boxes for `word`, `word_type`, `phonetic`, `definition`, `example`, and `level`
+
+Example config fields:
+
+```json
+{
+  "background_image": "assets/templates/default.png",
+  "fields": {
+    "word": {
+      "x": 96,
+      "y": 250,
+      "width": 888,
+      "font_path": "assets/fonts/Inter-Bold.ttf",
+      "font_size": 92,
+      "min_font_size": 48,
+      "color": "#101828",
+      "line_spacing": 10,
+      "max_lines": 2
+    }
+  }
+}
+```
+
+The renderer wraps text automatically, shrinks long words, supports custom fonts via `ImageFont.truetype`, and exports Telegram-ready PNG files before publishing.

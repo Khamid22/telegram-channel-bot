@@ -1,0 +1,55 @@
+{
+  "name": "New Words Template",
+  "background_image": "assets/templates/new-words-template.png",
+  "fields": {
+    "word": {
+      "x": 385,
+      "y": 410,
+      "width": 1820,
+      "font_path": "assets/fonts/Georgia-Bold.ttf",
+      "font_size": 160,
+      "min_font_size": 88,
+      "color": "#0D0D0D",
+      "line_spacing": 14,
+      "max_lines": 1,
+      "suffix": ":",
+      "uppercase": true
+    },
+    "word_type": {
+      "x": 385,
+      "y": 610,
+      "width": 1820,
+      "font_path": "assets/fonts/Georgia.ttf",
+      "font_size": 96,
+      "min_font_size": 62,
+      "color": "#0D0D0D",
+      "line_spacing": 8,
+      "max_lines": 1
+    },
+    "definition": {
+      "x": 385,
+      "y": 900,
+      "width": 1820,
+      "font_path": "assets/fonts/Georgia.ttf",
+      "font_size": 96,
+      "min_font_size": 62,
+      "color": "#0D0D0D",
+      "line_spacing": 24,
+      "max_lines": 4,
+      "prefix": "Definition: "
+    },
+    "example": {
+      "x": 385,
+      "y": 1450,
+      "width": 1820,
+      "font_path": "assets/fonts/Georgia.ttf",
+      "font_size": 96,
+      "min_font_size": 60,
+      "color": "#0D0D0D",
+      "line_spacing": 24,
+      "max_lines": 4,
+      "prefix": "Example: \"",
+      "suffix": "\""
+    }
+  }
+}

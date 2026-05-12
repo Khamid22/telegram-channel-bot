@@ -1,0 +1,15 @@
+credentials.json
+curious-skyline-*.json
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+logs/
+assets/generated/
+assets/audio/
+admin/static/
+frontend/node_modules/
+frontend/dist/
+*.sqlite3
