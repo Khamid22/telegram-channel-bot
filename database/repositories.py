@@ -231,6 +231,10 @@ class VocabularyCollectionRepository:
     ) -> VocabularyCollection:
         collection = self.db.scalar(select(VocabularyCollection).where(VocabularyCollection.drive_folder_id == drive_folder_id))
         if not collection:
+            # A Shared Drive root can be reconfigured after collections already exist.
+            # Keep the logical collection stable by slug instead of duplicating it.
+            collection = self.db.scalar(select(VocabularyCollection).where(VocabularyCollection.slug == slug))
+        if not collection:
             collection = VocabularyCollection(
                 name=name,
                 slug=slug,
@@ -242,6 +246,7 @@ class VocabularyCollectionRepository:
         else:
             collection.name = name
             collection.slug = slug
+            collection.drive_folder_id = drive_folder_id
             collection.source_folder_id = source_folder_id
             collection.generated_folder_id = generated_folder_id
         return collection
