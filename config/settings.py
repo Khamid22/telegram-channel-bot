@@ -9,6 +9,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _resolve_project_path(path: Path) -> Path:
+    return path if path.is_absolute() else BASE_DIR / path
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -49,6 +53,8 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings()
+    for attr in ("assets_dir", "template_config_dir", "generated_image_dir", "generated_audio_dir"):
+        setattr(settings, attr, _resolve_project_path(getattr(settings, attr)))
     for path in (
         settings.assets_dir,
         settings.template_config_dir,
