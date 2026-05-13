@@ -55,31 +55,25 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-4. Generate the sample static template image:
-
-```bash
-python scripts/create_sample_assets.py
-```
-
-5. Start PostgreSQL locally or with Docker, then initialize tables and the default admin:
+4. Start PostgreSQL locally or with Docker, then initialize tables and the default admin:
 
 ```bash
 python main.py init-db
 ```
 
-6. Start the Flask admin API. By default this also starts the embedded scheduler, controlled by `START_SCHEDULER_WITH_ADMIN=true`:
+5. Start the Flask admin API. By default this also starts the embedded scheduler, controlled by `START_SCHEDULER_WITH_ADMIN=true`:
 
 ```bash
 python main.py admin
 ```
 
-7. For production-style deployments, set `START_SCHEDULER_WITH_ADMIN=false` and start the scheduler in another terminal:
+6. For production-style deployments, set `START_SCHEDULER_WITH_ADMIN=false` and start the scheduler in another terminal:
 
 ```bash
 python main.py scheduler
 ```
 
-8. Optional aiogram polling process:
+7. Optional aiogram polling process:
 
 ```bash
 python main.py bot
@@ -151,7 +145,7 @@ Example config fields:
 
 ```json
 {
-  "background_image": "assets/templates/default.png",
+  "background_image": "assets/templates/new-words-template.png",
   "fields": {
     "word": {
       "x": 96,

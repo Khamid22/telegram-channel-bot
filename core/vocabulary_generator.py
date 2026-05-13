@@ -7,7 +7,7 @@ import tempfile
 from datetime import datetime
 from hashlib import sha1
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
@@ -46,6 +46,10 @@ HEADER_ALIASES = {
     "level": "level",
     "accent": "accent",
 }
+
+
+class GenerationCancelled(RuntimeError):
+    pass
 
 
 def _slug(value: str) -> str:
@@ -157,6 +161,8 @@ class VocabularyGeneratorService:
         name: str,
         caption_text: str,
         settings_payload: dict[str, Any] | None = None,
+        progress_callback: Callable[[GenerationBatch], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> GenerationBatch:
         rows = self.rows_for_source(source)
         batch = GenerationBatch(
@@ -172,9 +178,20 @@ class VocabularyGeneratorService:
         )
         self.db.add(batch)
         self.db.flush()
+        self.db.commit()
+        if progress_callback:
+            progress_callback(batch)
+
+        if should_cancel and should_cancel():
+            batch.status = "cancelled"
+            self.db.commit()
+            if progress_callback:
+                progress_callback(batch)
+            raise GenerationCancelled("Generation cancelled.")
 
         generated_folder_id = self.drive.ensure_folder(f"batch-{batch.id}-{_slug(batch.name)}", source.collection.generated_folder_id)
         batch.generated_folder_id = generated_folder_id
+        self.db.commit()
 
         ensure_template_files(template)
         renderer = VocabularyImageRenderer(template.config_path)
@@ -183,6 +200,13 @@ class VocabularyGeneratorService:
         with tempfile.TemporaryDirectory(prefix="writing-telegram-channel-") as temp_dir:
             output_dir = Path(temp_dir)
             for source_index, row in enumerate(rows, start=1):
+                if should_cancel and should_cancel():
+                    batch.status = "cancelled"
+                    self.db.commit()
+                    if progress_callback:
+                        progress_callback(batch)
+                    raise GenerationCancelled("Generation cancelled.")
+
                 word = self.words.upsert_from_source(source, row, source_index)
                 self.db.flush()
 
@@ -210,8 +234,13 @@ class VocabularyGeneratorService:
                     audio_drive_file_id=audio_drive.id,
                 )
                 batch.generated_items += 1
+                self.db.commit()
+                if progress_callback:
+                    progress_callback(batch)
 
         batch.status = "ready"
         self.logs.add("batch_generated", f"Generated {batch.generated_items} vocabulary posts", payload={"batch_id": batch.id})
         self.db.commit()
+        if progress_callback:
+            progress_callback(batch)
         return batch

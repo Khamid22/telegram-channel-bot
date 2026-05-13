@@ -1,8 +1,8 @@
-from sqlalchemy import inspect, select, text
+from sqlalchemy import inspect, select, text, update
 from werkzeug.security import generate_password_hash
 
 from config.settings import get_settings
-from database.models import AdminUser, Template
+from database.models import AdminUser, Post, Template
 from database.session import SessionLocal, engine, init_db
 
 
@@ -75,19 +75,6 @@ def bootstrap_database() -> None:
                 )
             )
 
-        existing_active = db.scalar(select(Template).where(Template.is_active.is_(True)))
-        default_template = db.scalar(select(Template).where(Template.name == "Default Editorial"))
-        default_was_active = bool(default_template and default_template.is_active)
-        if not default_template:
-            db.add(
-                Template(
-                    name="Default Editorial",
-                    image_path="assets/templates/default.png",
-                    config_path="assets/templates/default.json",
-                    is_active=False,
-                )
-            )
-
         new_words_template = db.scalar(select(Template).where(Template.name == "New Words Template"))
         created_new_words_template = new_words_template is None
         if not new_words_template:
@@ -102,6 +89,16 @@ def bootstrap_database() -> None:
             new_words_template.image_path = "assets/templates/new-words-template.png"
             new_words_template.config_path = "assets/templates/new-words-template.json"
 
+        db.flush()
+
+        default_template = db.scalar(select(Template).where(Template.name == "Default Editorial"))
+        default_was_active = bool(default_template and default_template.is_active)
+        if default_template:
+            db.execute(update(Post).where(Post.template_id == default_template.id).values(template_id=new_words_template.id))
+            db.delete(default_template)
+            db.flush()
+
+        existing_active = db.scalar(select(Template).where(Template.is_active.is_(True)))
         should_activate_new_words = created_new_words_template or default_was_active or existing_active is None
         if should_activate_new_words:
             for template in db.scalars(select(Template)).all():

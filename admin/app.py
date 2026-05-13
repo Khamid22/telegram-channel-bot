@@ -19,6 +19,7 @@ from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from googleapiclient.discovery import build as build_google_service
 from googleapiclient.errors import HttpError
+from PIL import Image
 from sqlalchemy import desc, select
 from werkzeug.security import check_password_hash
 from werkzeug.utils import secure_filename
@@ -38,6 +39,7 @@ from database.repositories import (
     analytics_summary,
 )
 from database.session import SessionLocal
+from core.generation_jobs import GenerationJobManager
 from core.google_drive import GoogleDriveStorage
 from core.google_drive_auth import build_authorization_url, credentials_from_refresh_token, exchange_code_for_tokens
 from core.scheduler import build_scheduler, normalize_time, normalize_times
@@ -48,10 +50,72 @@ from core.vocabulary_generator import VocabularyGeneratorService
 
 login_manager = LoginManager()
 runtime_scheduler = None
+generation_jobs = GenerationJobManager()
 
 
 def _slug(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "-", value.lower()).strip("-") or "template"
+
+
+def _template_config_for_image(image_path: Path) -> dict[str, Any]:
+    with Image.open(image_path) as image:
+        width, height = image.size
+
+    left = max(48, round(width * 0.14))
+    content_width = max(320, width - (left * 2))
+    return {
+        "name": image_path.stem.replace("-", " ").title(),
+        "background_image": str(image_path.relative_to(BASE_DIR)),
+        "fields": {
+            "word": {
+                "x": left,
+                "y": round(height * 0.22),
+                "width": content_width,
+                "font_path": "assets/fonts/Georgia-Bold.ttf",
+                "font_size": max(48, round(height * 0.075)),
+                "min_font_size": max(28, round(height * 0.04)),
+                "color": "#0D0D0D",
+                "line_spacing": 12,
+                "max_lines": 1,
+            },
+            "word_type": {
+                "x": left,
+                "y": round(height * 0.34),
+                "width": content_width,
+                "font_path": "assets/fonts/Georgia.ttf",
+                "font_size": max(32, round(height * 0.045)),
+                "min_font_size": max(22, round(height * 0.03)),
+                "color": "#0D0D0D",
+                "line_spacing": 8,
+                "max_lines": 1,
+            },
+            "definition": {
+                "x": left,
+                "y": round(height * 0.5),
+                "width": content_width,
+                "font_path": "assets/fonts/Georgia.ttf",
+                "font_size": max(34, round(height * 0.045)),
+                "min_font_size": max(24, round(height * 0.03)),
+                "color": "#0D0D0D",
+                "line_spacing": 18,
+                "max_lines": 4,
+                "prefix": "Definition: ",
+            },
+            "example": {
+                "x": left,
+                "y": round(height * 0.74),
+                "width": content_width,
+                "font_path": "assets/fonts/Georgia.ttf",
+                "font_size": max(30, round(height * 0.04)),
+                "min_font_size": max(22, round(height * 0.028)),
+                "color": "#0D0D0D",
+                "line_spacing": 18,
+                "max_lines": 4,
+                "prefix": "Example: \"",
+                "suffix": "\"",
+            },
+        },
+    }
 
 
 def _json(data: Any, status: int = 200):
@@ -759,19 +823,44 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
                 return _json({"error": "Select a Drive CSV source file."}, 400)
             if not template:
                 return _json({"error": "Select a saved template."}, 400)
-            batch = VocabularyGeneratorService(db).generate_batch(
-                source=source,
-                template=template,
+            job = generation_jobs.start(
+                source_file_id=source.id,
+                template_id=template.id,
                 name=data.get("name") or source.name,
                 caption_text=data.get("caption_text") or "",
                 settings_payload=data.get("settings_payload") or {},
             )
-            return _json({"item": _batch_payload(batch)}, 201)
+            return _json({"job": job.payload()}, 202)
         except (HttpError, RuntimeError, ValueError) as exc:
             db.rollback()
             return _json({"error": _drive_error_message(exc)}, 400)
         finally:
             db.close()
+
+    @app.get("/api/generator/vocabulary/batches/jobs/<job_id>")
+    @login_required
+    def vocabulary_batch_job(job_id: str):
+        job = generation_jobs.get(job_id)
+        if not job:
+            return _json({"error": "Generation job not found."}, 404)
+        payload = {"job": job.payload()}
+        if job.batch_id:
+            db = SessionLocal()
+            try:
+                batch = GenerationBatchRepository(db).get(job.batch_id)
+                if batch:
+                    payload["item"] = _batch_payload(batch)
+            finally:
+                db.close()
+        return _json(payload)
+
+    @app.post("/api/generator/vocabulary/batches/jobs/<job_id>/cancel")
+    @login_required
+    def cancel_vocabulary_batch_job(job_id: str):
+        job = generation_jobs.cancel(job_id)
+        if not job:
+            return _json({"error": "Generation job not found."}, 404)
+        return _json({"job": job.payload()})
 
     @app.post("/api/templates")
     @login_required
@@ -794,10 +883,9 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
             config_path = template_dir / config_filename
             config_file.save(config_path)
         else:
-            default_config = json.loads((template_dir / "default.json").read_text(encoding="utf-8"))
-            default_config["background_image"] = str(image_path.relative_to(BASE_DIR))
+            template_config = _template_config_for_image(image_path)
             config_path = template_dir / f"{slug}.json"
-            config_path.write_text(json.dumps(default_config, indent=2), encoding="utf-8")
+            config_path.write_text(json.dumps(template_config, indent=2), encoding="utf-8")
 
         db = SessionLocal()
         try:

@@ -41,7 +41,7 @@ def _safe_slug(value: str) -> str:
 class VocabularyImageRenderer:
     def __init__(self, template_config_path: str | Path | None = None) -> None:
         self.settings = get_settings()
-        self.template_config_path = _resolve_path(template_config_path or self.settings.template_config_dir / "default.json")
+        self.template_config_path = _resolve_path(template_config_path or self.settings.template_config_dir / "new-words-template.json")
 
     def render(self, word: Word, template_config_path: str | Path | None = None, *, output_dir: Path | None = None) -> Path:
         config_path = _resolve_path(template_config_path or self.template_config_path)
