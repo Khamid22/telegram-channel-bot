@@ -12,6 +12,7 @@ from database.models import (
     AudioFile,
     DriveSourceFile,
     GenerationBatch,
+    GoogleDriveCredential,
     Post,
     PostingLog,
     PostStatus,
@@ -231,7 +232,7 @@ class VocabularyCollectionRepository:
     ) -> VocabularyCollection:
         collection = self.db.scalar(select(VocabularyCollection).where(VocabularyCollection.drive_folder_id == drive_folder_id))
         if not collection:
-            # A Shared Drive root can be reconfigured after collections already exist.
+            # A Drive root can be reconfigured after collections already exist.
             # Keep the logical collection stable by slug instead of duplicating it.
             collection = self.db.scalar(select(VocabularyCollection).where(VocabularyCollection.slug == slug))
         if not collection:
@@ -305,6 +306,29 @@ class GenerationBatchRepository:
 
     def list(self) -> list[GenerationBatch]:
         return list(self.db.scalars(select(GenerationBatch).order_by(desc(GenerationBatch.created_at))))
+
+
+class GoogleDriveCredentialRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def active(self) -> GoogleDriveCredential | None:
+        return self.db.scalar(select(GoogleDriveCredential).order_by(GoogleDriveCredential.id.asc()).limit(1))
+
+    def save(self, *, refresh_token: str, account_email: str | None = None, scopes: str | None = None) -> GoogleDriveCredential:
+        credential = self.active()
+        if not credential:
+            credential = GoogleDriveCredential(refresh_token=refresh_token)
+            self.db.add(credential)
+        credential.refresh_token = refresh_token
+        credential.account_email = account_email
+        credential.scopes = scopes
+        return credential
+
+    def clear(self) -> None:
+        credential = self.active()
+        if credential:
+            self.db.delete(credential)
 
 
 class AdminRepository:

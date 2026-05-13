@@ -373,6 +373,27 @@ textarea:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+.drive-status-panel {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(180px, 1fr) minmax(240px, 1.8fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.drive-status-panel .panel-title { margin: 0; }
+.drive-status-panel strong { font-size: 14px; }
+.drive-status-panel span,
+.drive-status-panel small {
+  min-width: 0;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.drive-status-panel small {
+  font-size: 12px;
+  justify-self: end;
+}
+
 /* ====================== Generator CTA ====================== */
 
 .generator-cta {
@@ -826,6 +847,7 @@ pre {
   .generator-layout,
   .generator-workbench,
   .generator-review-grid,
+  .drive-status-panel,
   .schedule-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .queue-item, .preview-panel { grid-template-columns: 1fr; }
 }
@@ -838,8 +860,10 @@ pre {
   .generator-layout,
   .generator-workbench,
   .generator-review-grid,
+  .drive-status-panel,
   .schedule-form,
   .tab-list { grid-template-columns: 1fr; }
+  .drive-status-panel small { justify-self: start; }
   .schedule-times { grid-column: auto; }
   .table-panel { overflow-x: auto; }
   audio { width: 100%; }

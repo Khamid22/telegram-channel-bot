@@ -173,6 +173,17 @@ class DriveSourceFile(Base):
     batches: Mapped[list["GenerationBatch"]] = relationship(back_populates="source_file")
 
 
+class GoogleDriveCredential(Base):
+    __tablename__ = "google_drive_credentials"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_email: Mapped[str | None] = mapped_column(String(255), index=True)
+    refresh_token: Mapped[str] = mapped_column(Text)
+    scopes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class GenerationBatch(Base):
     __tablename__ = "generation_batches"
 

@@ -107,14 +107,13 @@ The app is available at `http://localhost:5050`.
 
 ## Google Drive
 
-Create a Google service account, enable the **Google Drive API** in that Google Cloud project, and place the service account JSON file at the path configured by `GOOGLE_SERVICE_ACCOUNT_FILE`. The local `credentials.json` file is ignored by Git.
+Enable the **Google Drive API** in Google Cloud and create an OAuth web client. Configure `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`, then sign in to the admin panel and use **Connect Drive** from the Dashboard. The app stores the resulting refresh token in PostgreSQL and writes files into that Google account's My Drive storage.
 
-Service accounts cannot own Drive storage in My Drive. Use a Shared Drive, add the service account as a member with permission to create files, and configure one of these modes:
+Use the Dashboard's displayed redirect URL as an authorized redirect URI for the OAuth client. In production it is:
 
-- Set `GOOGLE_DRIVE_ROOT_FOLDER_ID` to an existing `writing-telegram-channel` project folder inside that Shared Drive.
-- Or set `GOOGLE_DRIVE_PARENT_FOLDER_ID` to a folder inside that Shared Drive so the app can create or reuse `GOOGLE_DRIVE_ROOT_FOLDER_NAME` beneath it.
-
-A normal My Drive folder that was merely shared with the service account is not enough; the folder itself must live inside a Shared Drive.
+```text
+https://web-production-b60f9.up.railway.app/api/drive/oauth/callback
+```
 
 The app manages this Drive layout automatically:
 
@@ -130,7 +129,7 @@ writing-telegram-channel/
     └── templates/
 ```
 
-The app creates and reuses the vocabulary, template, source, and generated-post folders below the configured Shared Drive project root.
+The app creates and reuses the vocabulary, template, source, and generated-post folders below `GOOGLE_DRIVE_ROOT_FOLDER_NAME`. If `GOOGLE_DRIVE_ROOT_FOLDER_ID` is set, that folder is used directly.
 
 Vocabulary CSV files must use a header row. Supported starter columns are:
 

@@ -25,11 +25,10 @@ class Settings(BaseSettings):
     openai_tts_model: str = "gpt-4o-mini-tts"
     openai_tts_voice_uk: str = "alloy"
 
-    google_service_account_file: str = "credentials.json"
-    google_service_account_json: str = ""
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
     google_drive_root_folder_name: str = "writing-telegram-channel"
     google_drive_root_folder_id: str = ""
-    google_drive_parent_folder_id: str = ""
 
     admin_host: str = "0.0.0.0"
     admin_port: int = 5050
@@ -41,11 +40,6 @@ class Settings(BaseSettings):
     template_config_dir: Path = BASE_DIR / "assets" / "templates"
     generated_image_dir: Path = BASE_DIR / "assets" / "generated"
     generated_audio_dir: Path = BASE_DIR / "assets" / "audio"
-
-    @property
-    def google_credentials_path(self) -> Path:
-        candidate = Path(self.google_service_account_file)
-        return candidate if candidate.is_absolute() else BASE_DIR / candidate
 
     @property
     def bind_port(self) -> int:

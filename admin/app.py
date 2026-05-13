@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, time, timedelta
+import html
 from io import BytesIO
 import json
 import re
+import secrets
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, SchedulerNotRunningError
-from flask import Flask, jsonify, request, send_file, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_file, send_from_directory, session as flask_session, url_for
 from flask_cors import CORS
 from flask_login import LoginManager, current_user, login_required, login_user, logout_user
+from google.auth.exceptions import RefreshError
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from googleapiclient.discovery import build as build_google_service
 from googleapiclient.errors import HttpError
 from sqlalchemy import desc, select
 from werkzeug.security import check_password_hash
@@ -24,6 +29,7 @@ from database.repositories import (
     AdminRepository,
     DriveSourceFileRepository,
     GenerationBatchRepository,
+    GoogleDriveCredentialRepository,
     PostRepository,
     ScheduleRepository,
     TemplateRepository,
@@ -33,6 +39,7 @@ from database.repositories import (
 )
 from database.session import SessionLocal
 from core.google_drive import GoogleDriveStorage
+from core.google_drive_auth import build_authorization_url, credentials_from_refresh_token, exchange_code_for_tokens
 from core.scheduler import build_scheduler, normalize_time, normalize_times
 from core.image_renderer import VocabularyImageRenderer
 from core.publishing import PublishingService, build_caption
@@ -64,16 +71,36 @@ def _drive_error_message(exc: Exception) -> str:
             payload = json.loads(exc.content.decode("utf-8"))
             detail = payload.get("error", {}).get("message")
             if detail:
-                if "Service Accounts do not have storage quota" in detail:
-                    return (
-                        "Google Drive service accounts must write into a Shared Drive. "
-                        "Add the service account to that Shared Drive and configure "
-                        "GOOGLE_DRIVE_ROOT_FOLDER_ID or GOOGLE_DRIVE_PARENT_FOLDER_ID."
-                    )
                 return detail
         except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
             pass
     return str(exc)
+
+
+def _html_message(title: str, message: str, status: int = 200):
+    escaped_title = html.escape(title)
+    escaped_message = html.escape(message)
+    return (
+        f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escaped_title}</title>
+  <style>
+    body {{ font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 48px; color: #172033; }}
+    a {{ color: #2357d9; }}
+  </style>
+</head>
+<body>
+  <h1>{escaped_title}</h1>
+  <p>{escaped_message}</p>
+  <p><a href="/">Return to admin</a></p>
+</body>
+</html>""",
+        status,
+        {"Content-Type": "text/html; charset=utf-8"},
+    )
 
 
 def _word_payload(word: Word) -> dict[str, Any]:
@@ -352,6 +379,106 @@ def create_app(start_background_scheduler: bool = False) -> Flask:
         if not current_user.is_authenticated:
             return _json({"user": None}, 401)
         return _json({"user": {"id": current_user.id, "username": current_user.username}})
+
+    def google_drive_redirect_uri() -> str:
+        scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
+        return url_for("google_drive_oauth_callback", _external=True, _scheme=scheme)
+
+    @app.get("/api/drive/oauth/status")
+    @login_required
+    def google_drive_oauth_status():
+        db = SessionLocal()
+        try:
+            credential = GoogleDriveCredentialRepository(db).active()
+            configured = bool(settings.google_oauth_client_id and settings.google_oauth_client_secret)
+            return _json(
+                {
+                    "configured": configured,
+                    "connected": bool(credential),
+                    "account_email": credential.account_email if credential else None,
+                    "redirect_uri": google_drive_redirect_uri(),
+                    "root_folder_name": settings.google_drive_root_folder_name,
+                    "root_folder_id": settings.google_drive_root_folder_id or None,
+                }
+            )
+        finally:
+            db.close()
+
+    @app.post("/api/drive/oauth/start")
+    @login_required
+    def google_drive_oauth_start():
+        if not settings.google_oauth_client_id or not settings.google_oauth_client_secret:
+            return _json({"error": "Configure GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET first."}, 400)
+        state = secrets.token_urlsafe(32)
+        flask_session["google_drive_oauth_state"] = state
+        redirect_uri = google_drive_redirect_uri()
+        return _json(
+            {
+                "authorization_url": build_authorization_url(
+                    client_id=settings.google_oauth_client_id,
+                    redirect_uri=redirect_uri,
+                    state=state,
+                ),
+                "redirect_uri": redirect_uri,
+            }
+        )
+
+    @app.get("/api/drive/oauth/callback")
+    @login_required
+    def google_drive_oauth_callback():
+        if request.args.get("error"):
+            return _html_message("Google Drive Not Connected", request.args.get("error_description") or request.args["error"], 400)
+
+        expected_state = flask_session.pop("google_drive_oauth_state", None)
+        if not expected_state or request.args.get("state") != expected_state:
+            return _html_message("Google Drive Not Connected", "The authorization state did not match. Start the connection again.", 400)
+
+        code = request.args.get("code")
+        if not code:
+            return _html_message("Google Drive Not Connected", "Google did not return an authorization code.", 400)
+
+        db = SessionLocal()
+        try:
+            redirect_uri = google_drive_redirect_uri()
+            tokens = exchange_code_for_tokens(
+                client_id=settings.google_oauth_client_id,
+                client_secret=settings.google_oauth_client_secret,
+                redirect_uri=redirect_uri,
+                code=code,
+            )
+            credential_repo = GoogleDriveCredentialRepository(db)
+            existing = credential_repo.active()
+            refresh_token = tokens.get("refresh_token") or (existing.refresh_token if existing else None)
+            if not refresh_token:
+                return _html_message(
+                    "Google Drive Not Connected",
+                    "Google did not return a refresh token. Start the connection again and approve offline access.",
+                    400,
+                )
+
+            credentials = credentials_from_refresh_token(
+                client_id=settings.google_oauth_client_id,
+                client_secret=settings.google_oauth_client_secret,
+                refresh_token=refresh_token,
+            )
+            credentials.refresh(GoogleAuthRequest())
+            about = build_google_service("drive", "v3", credentials=credentials, cache_discovery=False).about().get(
+                fields="user(emailAddress,displayName)"
+            ).execute()
+            user = about.get("user", {})
+            credential_repo.save(
+                refresh_token=refresh_token,
+                account_email=user.get("emailAddress") or user.get("displayName"),
+                scopes=tokens.get("scope"),
+            )
+            db.commit()
+        except (RuntimeError, RefreshError, HttpError) as exc:
+            db.rollback()
+            return _html_message("Google Drive Not Connected", _drive_error_message(exc), 400)
+        finally:
+            db.close()
+
+        return redirect("/#dashboard")
 
     @app.get("/api/drive/vocabulary")
     @login_required

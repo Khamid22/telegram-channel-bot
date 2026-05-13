@@ -35,20 +35,22 @@ export default function App() {
   const [templates, setTemplates] = useState([]);
   const [batches, setBatches] = useState([]);
   const [failed, setFailed] = useState([]);
+  const [driveStatus, setDriveStatus] = useState(null);
   const [notice, setNotice] = useState('');
 
   const activeTab = useMemo(() => tabs.find((tab) => tab.id === active), [active]);
 
   async function loadAll() {
     // allSettled so one failing endpoint doesn't wipe all other state
-    const [analyticsRes, schedulesRes, queueRes, calendarRes, templatesRes, failedRes, batchesRes] = await Promise.allSettled([
+    const [analyticsRes, schedulesRes, queueRes, calendarRes, templatesRes, failedRes, batchesRes, driveRes] = await Promise.allSettled([
       api.analytics(),
       api.schedules(),
       api.queue(),
       api.calendar(),
       api.templates(),
       api.failedJobs(),
-      api.vocabularyBatches()
+      api.vocabularyBatches(),
+      api.driveOAuthStatus()
     ]);
     if (analyticsRes.status === 'fulfilled') setAnalytics(analyticsRes.value);
     if (schedulesRes.status === 'fulfilled') setSchedules(schedulesRes.value.items ?? []);
@@ -57,6 +59,7 @@ export default function App() {
     if (templatesRes.status === 'fulfilled') setTemplates(templatesRes.value.items ?? []);
     if (failedRes.status === 'fulfilled') setFailed(failedRes.value.items ?? []);
     if (batchesRes.status === 'fulfilled') setBatches(batchesRes.value.items ?? []);
+    if (driveRes.status === 'fulfilled') setDriveStatus(driveRes.value);
   }
 
   async function boot() {
@@ -95,6 +98,16 @@ export default function App() {
       await loadAll();
     } catch (error) {
       setNotice(error.message);
+    }
+  }
+
+  async function connectDrive() {
+    try {
+      const data = await api.startDriveOAuth();
+      window.location.href = data.authorization_url;
+    } catch (error) {
+      setNotice(error.message);
+      await loadAll();
     }
   }
 
@@ -140,7 +153,16 @@ export default function App() {
             <BookOpen size={17} /> Generator
           </button>
         </header>
-        {active === 'dashboard' ? <Dashboard analytics={analytics} onRefresh={loadAll} onDriveRefresh={refreshDrive} onOpenGenerator={() => openTab('generator')} /> : null}
+        {active === 'dashboard' ? (
+          <Dashboard
+            analytics={analytics}
+            driveStatus={driveStatus}
+            onRefresh={loadAll}
+            onDriveConnect={connectDrive}
+            onDriveRefresh={refreshDrive}
+            onOpenGenerator={() => openTab('generator')}
+          />
+        ) : null}
         {active === 'schedules' ? <Schedules schedules={schedules} batches={batches} onChanged={loadAll} /> : null}
         {active === 'queue' ? <Queue items={queue} onChanged={loadAll} /> : null}
         {active === 'calendar' ? <Calendar items={calendar} /> : null}

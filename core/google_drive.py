@@ -1,21 +1,23 @@
 from __future__ import annotations
 
 import io
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from google.oauth2.service_account import Credentials
+from google.auth.exceptions import RefreshError
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload, MediaIoBaseUpload
 
 from config.settings import get_settings
+from core.google_drive_auth import credentials_from_refresh_token
+from database.repositories import GoogleDriveCredentialRepository
+from database.session import SessionLocal
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
 CSV_MIME_TYPES = {"text/csv", "application/csv", "application/vnd.ms-excel"}
-SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
 @dataclass(slots=True)
@@ -37,35 +39,11 @@ def _slug(value: str) -> str:
 class GoogleDriveStorage:
     def __init__(self) -> None:
         self.settings = get_settings()
-        if self.settings.google_service_account_json:
-            credentials = Credentials.from_service_account_info(
-                json.loads(self.settings.google_service_account_json),
-                scopes=SCOPES,
-            )
-        elif self.settings.google_credentials_path.exists():
-            credentials = Credentials.from_service_account_file(self.settings.google_credentials_path, scopes=SCOPES)
-        else:
-            raise RuntimeError(f"Google Drive credentials file not found: {self.settings.google_credentials_path}")
+        credentials = self._load_credentials()
         self.service = build("drive", "v3", credentials=credentials, cache_discovery=False)
 
     def ensure_root_structure(self) -> dict[str, object]:
-        root_id = self.settings.google_drive_root_folder_id
-        if not root_id:
-            if not self.settings.google_drive_parent_folder_id:
-                raise RuntimeError(
-                    "Configure GOOGLE_DRIVE_ROOT_FOLDER_ID for an existing Drive project folder, "
-                    "or GOOGLE_DRIVE_PARENT_FOLDER_ID for a Drive folder where the app may create it."
-                )
-            self.ensure_shared_drive_folder(
-                self.settings.google_drive_parent_folder_id,
-                label="GOOGLE_DRIVE_PARENT_FOLDER_ID",
-            )
-            root_id = self.ensure_folder(
-                self.settings.google_drive_root_folder_name,
-                self.settings.google_drive_parent_folder_id,
-            )
-        else:
-            self.ensure_shared_drive_folder(root_id, label="GOOGLE_DRIVE_ROOT_FOLDER_ID")
+        root_id = self.settings.google_drive_root_folder_id or self.ensure_folder(self.settings.google_drive_root_folder_name)
         vocabulary_id = self.ensure_folder("vocabulary", root_id)
         templates_id = self.ensure_folder("templates", vocabulary_id)
 
@@ -86,19 +64,6 @@ class GoogleDriveStorage:
             "templates_id": templates_id,
             "collections": collections,
         }
-
-    def ensure_shared_drive_folder(self, folder_id: str, *, label: str) -> None:
-        payload = (
-            self.service.files()
-            .get(
-                fileId=folder_id,
-                fields="id,mimeType",
-                supportsAllDrives=True,
-            )
-            .execute()
-        )
-        if payload.get("mimeType") != FOLDER_MIME:
-            raise RuntimeError(f"{label} must point to a Google Drive folder.")
 
     def ensure_collection_folders(self, name: str, folder_id: str) -> dict[str, str]:
         return {
@@ -185,6 +150,27 @@ class GoogleDriveStorage:
             .execute()
         )
         return self._item(payload)
+
+    def _load_credentials(self):
+        if not self.settings.google_oauth_client_id or not self.settings.google_oauth_client_secret:
+            raise RuntimeError("Configure GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET before using Google Drive.")
+
+        db = SessionLocal()
+        try:
+            credential = GoogleDriveCredentialRepository(db).active()
+            if not credential:
+                raise RuntimeError("Connect Google Drive from the admin Dashboard before using Drive.")
+            credentials = credentials_from_refresh_token(
+                client_id=self.settings.google_oauth_client_id,
+                client_secret=self.settings.google_oauth_client_secret,
+                refresh_token=credential.refresh_token,
+            )
+            credentials.refresh(Request())
+            return credentials
+        except RefreshError as exc:
+            raise RuntimeError("Google Drive authorization expired. Reconnect Google Drive from the admin Dashboard.") from exc
+        finally:
+            db.close()
 
     def download_bytes(self, file_id: str) -> bytes:
         request = self.service.files().get_media(fileId=file_id, supportsAllDrives=True)

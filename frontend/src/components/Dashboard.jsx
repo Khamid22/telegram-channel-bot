@@ -1,4 +1,4 @@
-import { BarChart3, BookOpen, CheckCircle2, Clock3, FileWarning, LayoutTemplate, RefreshCw } from 'lucide-react';
+import { BarChart3, BookOpen, CheckCircle2, Clock3, FileWarning, HardDrive, LayoutTemplate, Link2, RefreshCw } from 'lucide-react';
 
 const metricIcons = {
   words: BarChart3,
@@ -8,8 +8,9 @@ const metricIcons = {
   templates: LayoutTemplate
 };
 
-export default function Dashboard({ analytics, onRefresh, onDriveRefresh, onOpenGenerator }) {
+export default function Dashboard({ analytics, driveStatus, onRefresh, onDriveConnect, onDriveRefresh, onOpenGenerator }) {
   const metrics = ['words', 'queued', 'published', 'failed', 'templates'];
+  const driveReady = Boolean(driveStatus?.configured && driveStatus?.connected);
 
   return (
     <section className="view-grid">
@@ -17,8 +18,18 @@ export default function Dashboard({ analytics, onRefresh, onDriveRefresh, onOpen
         <h2>Dashboard</h2>
         <div className="actions">
           <button className="ghost-btn" onClick={onRefresh}><RefreshCw size={17} /> Refresh</button>
-          <button className="primary-btn" onClick={onDriveRefresh}><RefreshCw size={17} /> Refresh Drive</button>
+          {driveReady ? (
+            <button className="primary-btn" onClick={onDriveRefresh}><RefreshCw size={17} /> Refresh Drive</button>
+          ) : (
+            <button className="primary-btn" onClick={onDriveConnect}><Link2 size={17} /> Connect Drive</button>
+          )}
         </div>
+      </div>
+      <div className="panel drive-status-panel">
+        <div className="panel-title"><HardDrive size={17} /> Google Drive</div>
+        <strong>{driveReady ? 'Connected' : driveStatus?.configured ? 'Not connected' : 'OAuth credentials needed'}</strong>
+        <span>{driveStatus?.account_email || driveStatus?.root_folder_name || 'writing-telegram-channel'}</span>
+        {driveStatus?.redirect_uri ? <small>{driveStatus.redirect_uri}</small> : null}
       </div>
       <div className="metrics-grid">
         {metrics.map((name) => {

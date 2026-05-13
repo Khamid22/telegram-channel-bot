@@ -39,6 +39,8 @@ export const api = {
   publishPost: (id) => request(`/api/publish/${id}`, { method: 'POST' }),
   calendar: () => request('/api/calendar'),
   failedJobs: () => request('/api/failed-jobs'),
+  driveOAuthStatus: () => request('/api/drive/oauth/status'),
+  startDriveOAuth: () => request('/api/drive/oauth/start', { method: 'POST' }),
   driveVocabulary: () => request('/api/drive/vocabulary'),
   refreshDrive: () => request('/api/drive/refresh', { method: 'POST' }),
   words: (params = {}) => request(`/api/words?${new URLSearchParams(params)}`),
