@@ -66,6 +66,23 @@ def publish_post(post_id: int):
         db.close()
 
 
+@bp.delete("/api/posts/<int:post_id>")
+@login_required
+def delete_post(post_id: int):
+    db = SessionLocal()
+    try:
+        post = db.get(Post, post_id)
+        if not post:
+            return _json({"error": "Post not found"}, 404)
+        post.schedule = None
+        post.scheduled_at = None
+        db.delete(post)
+        db.commit()
+        return _json({"ok": True})
+    finally:
+        db.close()
+
+
 @bp.get("/api/failed-jobs")
 @login_required
 def failed_jobs():

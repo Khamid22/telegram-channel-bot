@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Play, Volume2 } from "lucide-react";
+import { Play, Trash2, Volume2 } from "lucide-react";
 
 export const Route = createFileRoute("/queue")({
   component: QueuePage,
@@ -38,6 +38,17 @@ function QueuePage() {
     },
     onError: (err) =>
       toast.error(err instanceof Error ? err.message : "Failed"),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: api.deletePost,
+    onSuccess: () => {
+      toast.success("Post deleted");
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["analytics"] });
+    },
+    onError: (err) =>
+      toast.error(err instanceof Error ? err.message : "Delete failed"),
   });
 
   const items = data?.items ?? [];
@@ -125,13 +136,27 @@ function QueuePage() {
                 </span>
               )}
 
-              <Button
-                size="sm"
-                onClick={() => publishMutation.mutate(post.id)}
-                disabled={publishMutation.isPending}
-              >
-                <Play size={14} /> Publish
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => publishMutation.mutate(post.id)}
+                  disabled={publishMutation.isPending || deleteMutation.isPending}
+                >
+                  <Play size={14} /> Publish
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => {
+                    if (confirm(`Delete "${post.word.word}"?`)) {
+                      deleteMutation.mutate(post.id);
+                    }
+                  }}
+                  disabled={deleteMutation.isPending || publishMutation.isPending}
+                >
+                  <Trash2 size={14} />
+                </Button>
+              </div>
             </div>
           </article>
         ))}

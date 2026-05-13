@@ -62,6 +62,8 @@ export const api = {
   publishManual: () => request("/api/publish/manual", { method: "POST" }),
   publishPost: (id: number) =>
     request(`/api/publish/${id}`, { method: "POST" }),
+  deletePost: (id: number) =>
+    request(`/api/posts/${id}`, { method: "DELETE" }),
 
   calendar: () => request<{ items: Post[] }>("/api/calendar"),
   failedJobs: () => request<{ items: Post[] }>("/api/failed-jobs"),
